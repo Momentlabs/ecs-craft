@@ -1,0 +1,25 @@
+{
+  "name": "ecs-craft",
+  "version": "1.0.0",
+  "description": "This is used for installing my gulp dependencies.",
+  "main": "gulpfile.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jdrivas/ecs-craft.git"
+  },
+  "author": "",
+  "homepage": "https://github.com/jdrivas/ecs-craft",
+  "devDependencies": {
+    "gulp": "",
+    "gulper": "",
+    "gulp-prompt": "",
+    "gulp-run": "",
+    "gulp-util": "",
+    "console-stream": "",
+    "chalk": "",
+    "synchro-prompt": ""
+  }
+}
