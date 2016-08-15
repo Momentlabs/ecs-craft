@@ -85,8 +85,8 @@ func DoICommand(line string, ecsSvc *ecs.ECS, ec2Svc *ec2.EC2) (err error) {
   } else {
     switch command {
       case verboseCmd.FullCommand(): err = doVerbose()
-      case exit.FullCommand(): err = doQuit()
-      case quit.FullCommand(): err = doQuit()
+      case exit.FullCommand(): err = doQuit(ecsSvc)
+      case quit.FullCommand(): err = doQuit(ecsSvc)
       case serverLaunchCmd.FullCommand(): err = doLaunchServerCmd(ecsSvc)
       case serverTerminateCmd.FullCommand(): err = doTerminateServerCmd(ecsSvc)
       case serverListCmd.FullCommand(): err = doListServersCmd(ecsSvc, ec2Svc)
@@ -446,8 +446,35 @@ func toggleVerbose() bool {
   return verbose
 }
 
-func doQuit() (error) {
+func doQuit(ecsSvc *ecs.ECS) (error) {
+  clusters, err := awslib.GetAllClusterDescriptions(ecsSvc)
+  if err != nil {
+    fmt.Printf("doQuit: Error getting cluster data: %s\n", err)
+  } else {
+    for i, cluster := range clusters {
+      if *cluster.RegisteredContainerInstancesCount >= 0 {
+        fmt.Printf("%d. ECS Cluster %s\n", i+1, clusterShortString(cluster))
+      } 
+    }
+  }
+
   return io.EOF
+}
+
+func clusterShortString(c *ecs.Cluster) (s string) {
+  s += fmt.Sprintf("%s has %d instances with %d running and %d pending tasks.", *c.ClusterName, 
+    *c.RegisteredContainerInstancesCount, *c.RunningTasksCount, *c.PendingTasksCount)
+  return s
+}
+
+func printCluster(cluster *ecs.Cluster) {
+  fmt.Printf("Name: \"%s\"\n", *cluster.ClusterName)
+  fmt.Printf("ARN: %s\n", *cluster.ClusterArn)
+  fmt.Printf("Registered instances count: %d\n", *cluster.RegisteredContainerInstancesCount)
+  fmt.Printf("Pending tasks count: %d\n", *cluster.PendingTasksCount)
+  fmt.Printf("Running tasks count: %d\n", *cluster.RunningTasksCount)
+  fmt.Printf("Active services count: %d\n", *cluster.ActiveServicesCount)
+  fmt.Printf("Status: %s\n", *cluster.Status)
 }
 
 func doTerminate(i int) {}
