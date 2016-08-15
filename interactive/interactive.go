@@ -6,6 +6,7 @@ import (
   "strings"
   "fmt"
   "io"
+  "time"
   "ecs-pilot/awslib"
   "github.com/aws/aws-sdk-go/aws"
   "github.com/aws/aws-sdk-go/aws/session"
@@ -26,6 +27,7 @@ var (
   serverCmd *kingpin.CmdClause
   serverLaunchCmd *kingpin.CmdClause
   serverListCmd *kingpin.CmdClause
+  serverDescribeAllCmd *kingpin.CmdClause
   serverDescribeCmd *kingpin.CmdClause
   userNameArg string
   clusterNameArg string
@@ -46,10 +48,12 @@ func init() {
   serverLaunchCmd = serverCmd.Command("launch", "Launch a new minecraft server for a user in a cluster.")
   serverLaunchCmd.Arg("user", "User name of the server").Required().StringVar(&userNameArg)
   serverLaunchCmd.Arg("cluster", "ECS cluster to launch the server in.").Default("minecraft").StringVar(&clusterNameArg)
-  serverLaunchCmd.Arg("ecs-task", "ECS Task that represents a running minecraft server.").Default("itz-minecraft-25565").StringVar(&serverTaskArg)
-  serverLaunchCmd.Arg("ecs-conatiner-name", "Container name for the minecraft server (used for environment variables.").Default("itz-minecraft_25565").StringVar(&serverContainerNameArg)
+  serverLaunchCmd.Arg("ecs-task", "ECS Task that represents a running minecraft server.").Default("itz-minecraft-aws").StringVar(&serverTaskArg)
+  serverLaunchCmd.Arg("ecs-conatiner-name", "Container name for the minecraft server (used for environment variables.").Default("minecraft-server-itzg").StringVar(&serverContainerNameArg)
   serverListCmd = serverCmd.Command("list", "List the servers for a cluster.")
   serverListCmd.Arg("cluster", "ECS cluster to look for servers.").Default("minecraft").StringVar(&clusterNameArg)
+  serverDescribeAllCmd = serverCmd.Command("describe-all", "Show details for all servers in cluster.")
+  serverDescribeAllCmd.Arg("cluster", "The ECS cluster where the servers live.").Default("minecraft").StringVar(&clusterNameArg)
   serverDescribeCmd = serverCmd.Command("describe", "Show some details for a users server.")
   serverDescribeCmd.Arg("user", "The user that owns the server.").Required().StringVar(&userNameArg)
   serverDescribeCmd.Arg("cluster", "The ECS cluster where the server lives.").Default("minecraft").StringVar(&clusterNameArg)
@@ -80,6 +84,7 @@ func DoICommand(line string, ecsSvc *ecs.ECS, ec2Svc *ec2.EC2) (err error) {
       case quit.FullCommand(): err = doQuit()
       case serverLaunchCmd.FullCommand(): err = doLaunchServerCmd(ecsSvc)
       case serverListCmd.FullCommand(): err = doListServersCmd(ecsSvc, ec2Svc)
+      case serverDescribeAllCmd.FullCommand(): err = doDescribeAllServersCmd(ecsSvc, ec2Svc)
       case serverDescribeCmd.FullCommand(): err = doDescribeServerCmd()
     }
   }
@@ -89,7 +94,11 @@ func DoICommand(line string, ecsSvc *ecs.ECS, ec2Svc *ec2.EC2) (err error) {
 func doLaunchServerCmd(ecsSvc *ecs.ECS) (error) {
   taskDefinition := serverTaskArg
   env := getServerEnvironment(serverContainerNameArg, userNameArg)
+  if verbose {
+    fmt.Printf("Making container with environment: %#v\n", env)
+  }
   resp, err := awslib.RunTaskWithEnv(clusterNameArg, taskDefinition, env, ecsSvc)
+  startTime := time.Now()
   tasks := resp.Tasks
   failures := resp.Failures
   if err == nil {
@@ -98,11 +107,9 @@ func doLaunchServerCmd(ecsSvc *ecs.ECS) (error) {
       waitForTaskArn := *tasks[0].TaskArn
       awslib.OnTaskRunning(clusterNameArg, waitForTaskArn, ecsSvc, func(taskDescrip *ecs.DescribeTasksOutput, err error) {
         if err == nil {
-          fmt.Printf("\nServer is now running for user %s on cluster %s.\n", userNameArg, clusterNameArg)
-          fmt.Printf("%s", tasksDescriptionShortString(taskDescrip.Tasks, taskDescrip.Failures))
-        } else {
-          fmt.Printf("Couldn't run the task: %s.\n", err)
-        }
+          fmt.Printf("\nServer is now running for user %s on cluster %s (%s).\n", userNameArg, clusterNameArg, time.Since(startTime))
+          fmt.Printf("%s\n", tasksDescriptionShortString(taskDescrip.Tasks, taskDescrip.Failures))
+        } 
       })
     }
   } 
@@ -126,7 +133,7 @@ func getServerEnvironment(containerName string, username string) awslib.Containe
     // "QUERY_PORT": "25565",
     "RCON": "true",
     "RCON_PORT": "25575",
-    "MOTD": fmt.Sprintf("A neightborhood kept by %s.", username),
+    "MOTD": fmt.Sprintf("A neighborhood kept by %s.", username),
     "PVP": "false",
     // "LEVEL": "world", // World Save name
     "ONLINE_MODE": "true",
@@ -193,11 +200,98 @@ func failureShortString(failure *ecs.Failure) (s string){
   return s
 }
 
-func doListServersCmd(ecsSvc *ecs.ECS, ec2Svc *ec2.EC2) (error) {
+
+// ServerMap
+// map[TaskID]{Task, []Container, ContainerInstance, EC2Instance}
+
+func doListServersCmd(ecsSvc *ecs.ECS, ec2Svc *ec2.EC2) (err error) {
+
+  dtm, err := awslib.GetDeepTasks(clusterNameArg, ecsSvc, ec2Svc)
+  if err != nil {return err}
+
+
+  taskCount := 0
+  for _, dtask := range dtm {
+    taskCount++
+    task := dtask.Task
+    ec2Inst := dtask.EC2Instance
+    containers := task.Containers
+    if task != nil && ec2Inst != nil {
+      if len(containers) == 1 {
+        container := containers[0]
+        fmt.Printf("%d. %s\n", taskCount, shortServerString(task, container, ec2Inst))
+      } else {
+
+      }
+    } else {
+      failString := ""
+      if dtask.Failure != nil {
+        failString += fmt.Sprintf("Task Failure: %s", *dtask.Failure.Reason)
+      }
+      if dtask.CIFailure != nil {
+        failString += fmt.Sprintf(" ContainerInstance Failure: %s", *dtask.CIFailure.Reason)
+      }
+      err = fmt.Errorf("%s\n", failString)
+    }
+  }
+  return err
+}
+
+// Name (ShortTaskDefArn), Update, State, Public IP, [PortMaps]
+//      TaskArn
+func shortServerString(task *ecs.Task, container *ecs.Container, instance *ec2.Instance) (s string) {
+  uptime := time.Since(*task.StartedAt)
+  s += fmt.Sprintf("%s (%s),", *container.Name, shortArnString(task.TaskDefinitionArn))
+  // s += fmt.Sprintf("%s,", *task.LastStatus)
+  s += fmt.Sprintf(" %s, %s:%s",shortDurationString(uptime), *instance.PublicIpAddress, allBindingsString(container.NetworkBindings))
+  // s += fmt.Sprintf("%s (%s), %s, started %s ago - %s %s", *container.Name, shortArnString(task.TaskDefinitionArn), 
+  //   *task.LastStatus, shortDurationString(uptime), *instance.PublicIpAddress, allBindingsString(container.NetworkBindings))
+  s += fmt.Sprintf("\n\t%s", *task.TaskArn)    
+  return s
+}
+
+func shortDurationString(d time.Duration) (s string) {
+  days := int(d.Hours()) / 24
+  hours := int(d.Hours()) % 24
+  minutes := int(d.Minutes()) % 60
+  if days == 0 {
+    s = fmt.Sprintf("%dh %dm", hours, minutes)
+  } else {
+    s = fmt.Sprintf("%dd %dh %dm", days, hours, minutes)
+  }
+  return s
+}
+
+// Return just the last part of the ARN
+// e.g. shortArnString("arn:aws:ecs:us-east-1:033441544097:task-definition/itz-minecraft-aws:5")
+// returns itz-minecraft-aws:5
+func shortArnString(arn *string) (s string) {
+  if arn == nil {
+    return "<nil>"
+  }
+  splits := strings.Split(*arn, "/")
+  return splits[1]
+}
+
+func allBindingsString(bindings []*ecs.NetworkBinding) (s string) {
+  s += "["
+  for i, bind := range bindings {
+    s += fmt.Sprintf("%d:%d", *bind.ContainerPort, *bind.HostPort)
+    if i+1 < len(bindings) {s += ", "}
+  }
+  s += "]"
+  return s
+}
+
+func doDescribeAllServersCmd(ecsSvc *ecs.ECS, ec2Svc *ec2.EC2) (error) {
   // TODO: This assumes that all tasks in a cluster a minecraft servers. 
   ctMap, err := awslib.GetAllTaskDescriptions(clusterNameArg, ecsSvc)
   if err != nil {
     return fmt.Errorf("Couldn't get tasks for cluster %s: %v\n.", clusterNameArg, err)
+  }
+  if len(ctMap) <= 0 {
+    fmt.Printf("No servers on cluster %s\n", clusterNameArg)
+    return nil
   }
 
   ciMap, err := awslib.GetAllContainerInstanceDescriptions(clusterNameArg, ecsSvc)
