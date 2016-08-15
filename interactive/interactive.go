@@ -222,13 +222,11 @@ func doListServersCmd(ecsSvc *ecs.ECS, ec2Svc *ec2.EC2) (err error) {
       } else {
         // This should probably not happen, but for completness ....
         // TODO: Should we panic or something here?
-        // Number. ShortTaskArn Uptime, Public IP
         uptime := time.Since(*task.StartedAt)
         fmt.Printf("%d. %s, %s, %s\n", taskCount, shortArnString(task.TaskDefinitionArn), 
           shortDurationString(uptime), *ec2Inst.PublicIpAddress)
         fmt.Printf("There are (%d) containers:", len(containers))
         for i, container := range containers {
-          // Number. ContainerName, PublicIp[BINDINGS]
           fmt.Printf("\t%d. %s %s:%s", i+1, container.Name, *ec2Inst.PublicIpAddress, allBindingsString(container.NetworkBindings))
         }
       }
@@ -294,44 +292,41 @@ func allBindingsString(bindings []*ecs.NetworkBinding) (s string) {
 
 func doDescribeAllServersCmd(ecsSvc *ecs.ECS, ec2Svc *ec2.EC2) (error) {
   // TODO: This assumes that all tasks in a cluster a minecraft servers. 
-  ctMap, err := awslib.GetAllTaskDescriptions(clusterNameArg, ecsSvc)
-  if err != nil {
-    return fmt.Errorf("Couldn't get tasks for cluster %s: %v\n.", clusterNameArg, err)
-  }
-  if len(ctMap) <= 0 {
-    fmt.Printf("No servers on cluster %s\n", clusterNameArg)
-    return nil
-  }
+  // ctMap, err := awslib.GetAllTaskDescriptions(clusterNameArg, ecsSvc)
+  // if err != nil {
+  //   return fmt.Errorf("Couldn't get tasks for cluster %s: %v\n.", clusterNameArg, err)
+  // }
+  // if len(ctMap) <= 0 {
+  //   fmt.Printf("No servers on cluster %s\n", clusterNameArg)
+  //   return nil
+  // }
 
-  ciMap, err := awslib.GetAllContainerInstanceDescriptions(clusterNameArg, ecsSvc)
-  if err != nil {
-    return fmt.Errorf("Couldn't get container instances for cluster %s: %v\n", clusterNameArg, err)
-  }
+  // ciMap, err := awslib.GetAllContainerInstanceDescriptions(clusterNameArg, ecsSvc)
+  // if err != nil {
+  //   return fmt.Errorf("Couldn't get container instances for cluster %s: %v\n", clusterNameArg, err)
+  // }
 
-  ec2Map, err := awslib.DescribeEC2Instances(ciMap, ec2Svc)
-  if err != nil {
-    return fmt.Errorf("Couldn't get the EC2 intances for the cluster: %s: %v\n", clusterNameArg, err)
-  }
+  // ec2Map, err := awslib.DescribeEC2Instances(ciMap, ec2Svc)
+  // if err != nil {
+  //   return fmt.Errorf("Couldn't get the EC2 intances for the cluster: %s: %v\n", clusterNameArg, err)
+  // }
 
-  for taskArn, ct := range ctMap {
-    task := ct.Task
-    failure := ct.Failure
-    fmt.Printf("=========================\n")
-    if task != nil {
-      ctrs := task.Containers
-      if len(ctrs) > 1 {
-        fmt.Printf("There were (%d) containers associated with this task.\n", len(ctrs))
+  dtm, err := awslib.GetDeepTasks(clusterNameArg, ecsSvc, ec2Svc)
+  if err != nil {return err}
+
+  taskCount := 0
+  for _, dtask := range dtm {
+    taskCount++
+    task := dtask.Task
+    ec2Inst := dtask.EC2Instance
+    containers := task.Containers
+    if task != nil && ec2Inst != nil {
+      fmt.Printf("=========================\n")
+      if len(containers) > 1 {
+        fmt.Printf("There were (%d) containers associated with this task.\n", len(containers))
       }
-
-      ciMapEntry := ciMap[*task.ContainerInstanceArn]
       coMap := makeContainerOverrideMap(task.Overrides)
-      cInst := ciMapEntry.Instance
-      cFail := ciMapEntry.Failure
-      if cFail != nil {
-        fmt.Printf("Failure for container: %s\n", *cFail.Reason)
-      }
-      ec2Inst := ec2Map[*cInst.Ec2InstanceId]
-      for _, container := range ctrs {
+      for _, container := range containers {
         fmt.Printf("Server: %s\n", *container.Name)
         fmt.Printf("Instance IP: %s\n", *ec2Inst.PublicIpAddress)
         fmt.Printf("Instance ID: %s\n", *ec2Inst.InstanceId)
@@ -339,19 +334,20 @@ func doDescribeAllServersCmd(ecsSvc *ecs.ECS, ec2Svc *ec2.EC2) (error) {
         fmt.Printf("Location: %s\n", *ec2Inst.Placement.AvailabilityZone)
         fmt.Printf("Public DNS: %s\n", *ec2Inst.PublicDnsName)
         fmt.Printf("Network Bindings:\n%s", networkBindingsString(container.NetworkBindings))
-        fmt.Printf("Container Override:\n%s\n", overrideString(coMap[*container.Name], 3))
+        fmt.Printf("%s\n", overrideString(coMap[*container.Name], 3))
 
         fmt.Printf("Started: %s\n", task.StartedAt.Local())
         fmt.Printf("Status: %s\n", *task.LastStatus)
 
-        fmt.Printf("Task: %s\n", taskArn)
+        fmt.Printf("Task: %s\n", *task.TaskArn)
         fmt.Printf("Task Definition: %s\n", *task.TaskDefinitionArn)
       }
     }
-    if failure != nil {
-      fmt.Printf("Failure for Task: %s\n")
-      fmt.Printf("Reason: %s\n", *failure.Reason)
-      fmt.Printf("On resource arn: %s\n", *failure.Arn)
+    if dtask.Failure != nil {
+      fmt.Printf("Task failure - Reason: %s, Resource ARN: %s\n", *dtask.Failure.Reason, *dtask.Failure.Arn)
+    }
+    if dtask.CIFailure != nil {
+      fmt.Printf("ContainerInstane failure - Reason: %s, Resource ARN: %s\n", *dtask.CIFailure.Reason, *dtask.CIFailure.Arn)
     }
   }
 
