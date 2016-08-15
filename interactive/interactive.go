@@ -209,7 +209,6 @@ func doListServersCmd(ecsSvc *ecs.ECS, ec2Svc *ec2.EC2) (err error) {
   dtm, err := awslib.GetDeepTasks(clusterNameArg, ecsSvc, ec2Svc)
   if err != nil {return err}
 
-
   taskCount := 0
   for _, dtask := range dtm {
     taskCount++
@@ -221,7 +220,17 @@ func doListServersCmd(ecsSvc *ecs.ECS, ec2Svc *ec2.EC2) (err error) {
         container := containers[0]
         fmt.Printf("%d. %s\n", taskCount, shortServerString(task, container, ec2Inst))
       } else {
-
+        // This should probably not happen, but for completness ....
+        // TODO: Should we panic or something here?
+        // Number. ShortTaskArn Uptime, Public IP
+        uptime := time.Since(*task.StartedAt)
+        fmt.Printf("%d. %s, %s, %s\n", taskCount, shortArnString(task.TaskDefinitionArn), 
+          shortDurationString(uptime), *ec2Inst.PublicIpAddress)
+        fmt.Printf("There are (%d) containers:", len(containers))
+        for i, container := range containers {
+          // Number. ContainerName, PublicIp[BINDINGS]
+          fmt.Printf("\t%d. %s %s:%s", i+1, container.Name, *ec2Inst.PublicIpAddress, allBindingsString(container.NetworkBindings))
+        }
       }
     } else {
       failString := ""
