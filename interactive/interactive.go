@@ -12,6 +12,7 @@ import (
   "github.com/aws/aws-sdk-go/aws/session"
   "github.com/aws/aws-sdk-go/service/ecs"
   "github.com/aws/aws-sdk-go/service/ec2"
+  "github.com/mgutz/ansi"
 )
 
 var (
@@ -50,8 +51,8 @@ func init() {
   serverLaunchCmd = serverCmd.Command("launch", "Launch a new minecraft server for a user in a cluster.")
   serverLaunchCmd.Arg("user", "User name of the server").Required().StringVar(&userNameArg)
   serverLaunchCmd.Arg("cluster", "ECS cluster to launch the server in.").Default("minecraft").StringVar(&clusterNameArg)
-  serverLaunchCmd.Arg("ecs-task", "ECS Task that represents a running minecraft server.").Default("itz-minecraft-aws").StringVar(&serverTaskArg)
-  serverLaunchCmd.Arg("ecs-conatiner-name", "Container name for the minecraft server (used for environment variables.").Default("minecraft-server-itzg").StringVar(&serverContainerNameArg)
+  serverLaunchCmd.Arg("ecs-task", "ECS Task that represents a running minecraft server.").Default("minecraft-ecs").StringVar(&serverTaskArg)
+  serverLaunchCmd.Arg("ecs-conatiner-name", "Container name for the minecraft server (used for environment variables.").Default("minecraft-aws").StringVar(&serverContainerNameArg)
   serverTerminateCmd = serverCmd.Command("terminate", "Stop this server")
   serverTerminateCmd.Arg("ecs-task-arn", "ECS Task ARN for this server.").Required().StringVar(&serverTaskArnArg)
   serverListCmd = serverCmd.Command("list", "List the servers for a cluster.")
@@ -451,6 +452,7 @@ func doQuit(ecsSvc *ecs.ECS) (error) {
   if err != nil {
     fmt.Printf("doQuit: Error getting cluster data: %s\n", err)
   } else {
+    fmt.Println(time.Now().Local())
     for i, cluster := range clusters {
       if *cluster.RegisteredContainerInstancesCount >= 0 {
         fmt.Printf("%d. ECS Cluster %s\n", i+1, clusterShortString(cluster))
@@ -462,8 +464,14 @@ func doQuit(ecsSvc *ecs.ECS) (error) {
 }
 
 func clusterShortString(c *ecs.Cluster) (s string) {
-  s += fmt.Sprintf("%s has %d instances with %d running and %d pending tasks.", *c.ClusterName, 
-    *c.RegisteredContainerInstancesCount, *c.RunningTasksCount, *c.PendingTasksCount)
+  highlight := ""
+  reset := ""
+  if *c.RegisteredContainerInstancesCount > 0  {  
+    highlight = fmt.Sprintf(ansi.ColorCode("red+b"))
+    reset = fmt.Sprintf(ansi.ColorCode("reset"))
+  }
+  s += fmt.Sprintf("%s%s has %d instances with %d running and %d pending tasks.%s", highlight, *c.ClusterName, 
+    *c.RegisteredContainerInstancesCount, *c.RunningTasksCount, *c.PendingTasksCount, reset)
   return s
 }
 
