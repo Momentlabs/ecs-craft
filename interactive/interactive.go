@@ -52,7 +52,7 @@ func init() {
   serverLaunchCmd.Arg("user", "User name of the server").Required().StringVar(&userNameArg)
   serverLaunchCmd.Arg("cluster", "ECS cluster to launch the server in.").Default("minecraft").StringVar(&clusterNameArg)
   serverLaunchCmd.Arg("ecs-task", "ECS Task that represents a running minecraft server.").Default("minecraft-ecs").StringVar(&serverTaskArg)
-  serverLaunchCmd.Arg("ecs-conatiner-name", "Container name for the minecraft server (used for environment variables.").Default("minecraft-aws").StringVar(&serverContainerNameArg)
+  serverLaunchCmd.Arg("ecs-conatiner-name", "Container name for the minecraft server (used for environment variables.").Default("minecraft").StringVar(&serverContainerNameArg)
   serverTerminateCmd = serverCmd.Command("terminate", "Stop this server")
   serverTerminateCmd.Arg("ecs-task-arn", "ECS Task ARN for this server.").Required().StringVar(&serverTaskArnArg)
   serverListCmd = serverCmd.Command("list", "List the servers for a cluster.")
@@ -109,7 +109,7 @@ func doLaunchServerCmd(ecsSvc *ecs.ECS) (error) {
   tasks := resp.Tasks
   failures := resp.Failures
   if err == nil {
-    fmt.Printf("Launched %s\n", tasksDescriptionShortString(tasks, failures))
+    fmt.Printf("Launched Server: %s\n", tasksDescriptionShortString(tasks, failures))
     if len(tasks) == 1 {
       waitForTaskArn := *tasks[0].TaskArn
       awslib.OnTaskRunning(clusterNameArg, waitForTaskArn, ecsSvc, func(taskDescrip *ecs.DescribeTasksOutput, err error) {
@@ -145,9 +145,11 @@ func doTerminateServerCmd(ecsSvc *ecs.ECS) (error) {
       task := tasks[0]
       fmt.Printf("Stopped task %s at %s\n", shortArnString(task.TaskArn), task.StoppedAt.Local())
       if len(task.Containers) > 1 {
-        fmt.Printf("Expected only one container, there were (%d)\n", len(task.Containers))
+        fmt.Printf("There were (%d) conatiners associated with this task.\n", len(task.Containers))
       }
-      fmt.Printf("Stopped container %s, originally started: %s (%s)\n", *task.Containers[0].Name, task.StartedAt.Local(), time.Since(*task.StartedAt))
+      for i, container := range task.Containers {
+        fmt.Printf("%d. Stopped container %s, originally started: %s (%s)\n", i+1, *container.Name, task.StartedAt.Local(), time.Since(*task.StartedAt))
+      }
     } else {
       for i, task := range tasks {
         fmt.Printf("%i. Stopped task %s at %s. Started at: %s (%s)\n", i+1, shortArnString(task.TaskArn), task.StoppedAt.Local(), task.StartedAt.Local(), time.Since(*task.StartedAt))
@@ -167,6 +169,7 @@ func getServerEnvironment(containerName string, username string) awslib.Containe
   cenv := make(awslib.ContainerEnvironmentMap)
   cenv[containerName] = map[string]string {
     "OPS": username,
+    // "WHITELIST": "",
     "MODE": "creative",
     "VIEW_DISTANCE": "50",
     "SPAWN_ANIMALS": "true",
@@ -175,14 +178,15 @@ func getServerEnvironment(containerName string, username string) awslib.Containe
     "FORCE_GAMEMODE": "true",
     "GENERATE_STRUCTURES": "true",
     "ALLOW_NETHER": "true",
-    "MAX_PLAYERS": "50",
+    "MAX_PLAYERS": "20",
     "QUERY": "true",
-    // "QUERY_PORT": "25565",
-    "RCON": "true",
+    "QUERY_PORT": "25565",
+    "ENABLE_RCON": "true",
     "RCON_PORT": "25575",
+    "RCON_PASSWORD": "testing",
     "MOTD": fmt.Sprintf("A neighborhood kept by %s.", username),
     "PVP": "false",
-    // "LEVEL": "world", // World Save name
+    "LEVEL": "world", // World Save name
     "ONLINE_MODE": "true",
     "JVM_OPTS": "-Xmx1024M -Xms1024M",
   }
@@ -192,14 +196,16 @@ func getServerEnvironment(containerName string, username string) awslib.Containe
 func tasksDescriptionShortString(tasks []*ecs.Task, failures []*ecs.Failure) (s string) {
   switch {
   case len(tasks) == 1:
+    task := tasks[0]
     containers := tasks[0].Containers
     switch {
     case len(containers) == 1:
       s += containerShortString(containers[0])
     case len(containers) >= 0:
-      s += fmt.Sprintf("There were (%d) containers for this task.", len(containers))
+      s += fmt.Sprintf("%s\n", shortArnString(task.TaskDefinitionArn))
+      s += fmt.Sprintf("There were (%d) containers for this task.\n", len(containers))
       for i, c := range containers {
-        s+= fmt.Sprintf("\t%d. %s\n", i+1, containerShortString(c))
+        s+= fmt.Sprintf("%d. %s\n", i+1, containerShortString(c))
       }
     }
   case len(tasks) > 0:
@@ -270,11 +276,12 @@ func doListServersCmd(ecsSvc *ecs.ECS, ec2Svc *ec2.EC2) (err error) {
         // This should probably not happen, but for completness ....
         // TODO: Should we panic or something here?
         uptime := time.Since(*task.StartedAt)
-        fmt.Printf("%d. %s, %s, %s\n", taskCount, shortArnString(task.TaskDefinitionArn), 
-          shortDurationString(uptime), *ec2Inst.PublicIpAddress)
-        fmt.Printf("There are (%d) containers:", len(containers))
+        fmt.Printf("%d. %s, %s, %s task arn: %s\n", taskCount, shortArnString(task.TaskDefinitionArn), 
+          shortDurationString(uptime), *ec2Inst.PublicIpAddress, shortArnString(task.TaskArn))
+        fmt.Printf("There are (%d) containers:\n", len(containers))
         for i, container := range containers {
-          fmt.Printf("\t%d. %s %s:%s", i+1, container.Name, *ec2Inst.PublicIpAddress, allBindingsString(container.NetworkBindings))
+          fmt.Printf("\t%d. %s: %s %s:%s\n", i+1, *container.LastStatus, *container.Name, 
+            *ec2Inst.PublicIpAddress, allBindingsString(container.NetworkBindings))
         }
       }
     } else {
@@ -324,7 +331,11 @@ func shortArnString(arn *string) (s string) {
     return "<nil>"
   }
   splits := strings.Split(*arn, "/")
-  return splits[1]
+  shortArn := splits[0]
+  if len(splits) >= 2 {
+    shortArn = splits[1]
+  }
+  return shortArn
 }
 
 func allBindingsString(bindings []*ecs.NetworkBinding) (s string) {
@@ -515,7 +526,7 @@ func DoInteractive(config *aws.Config) {
   session := session.New(config)
 
   // Print out some account specifics.
-  fmt.Printf("%s", awslib.AccountDetailsString(config))
+  fmt.Printf("%s\n", awslib.AccountDetailsString(config))
 
   ecsSvc := ecs.New(session)
   ec2Svc := ec2.New(session)
