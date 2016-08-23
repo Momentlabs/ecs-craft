@@ -7,11 +7,13 @@ import (
   "ecs-craft/interactive"
   "ecs-pilot/awslib"
   "github.com/aws/aws-sdk-go/aws"
+  "github.com/op/go-logging"
 )
 
 var (
   app                               *kingpin.Application
   verbose                           bool
+  debug                             bool
   regionArg                         string
   profileArg                        string
 
@@ -22,11 +24,15 @@ var (
   // serverLaunchCmd *kingpin.CmdClause
   // serverListCmd *kingpin.CmdClause
   // serverDescribeCmd *kingpin.CmdClause
+
+  log *logging.Logger
 )
 
 func init() {
+  log = logging.MustGetLogger("ecs-craft")
   app = kingpin.New("craft-config.go", "Command line to to manage minecraft configs.")
   app.Flag("verbose", "Describe what is happening, as it happens.").Short('v').BoolVar(&verbose)
+  app.Flag("debug", "Describe what is happening, as it happens.").Short('v').BoolVar(&debug)
   app.Flag("region", "Manage continers in this AWS region.").Default("us-east-1").StringVar(&regionArg)
   app.Flag("profile", "AWS profile to use for credentials.").Default("minecraft").StringVar(&profileArg)
 
@@ -39,6 +45,10 @@ func main() {
 
   // Parse the command line to fool with flags and get the command we'll execeute.
   command := kingpin.MustParse(app.Parse(os.Args[1:]))
+
+  if verbose || debug {
+    setLogLevel(logging.DEBUG)
+  }
 
    // Set up AWS.
    config := awslib.GetConfig(profileArg, "")
@@ -57,6 +67,14 @@ func main() {
     interactive.DoInteractive(config)
   } else {
     commandMap[command]("")
+  }
+
+}
+
+func setLogLevel(l logging.Level) {
+  logs := []string {"ecs-craft, ecs-craft/interactive, ecspilot/awslib"}
+  for _, log := range logs {
+    logging.SetLevel(l, log)
   }
 }
 

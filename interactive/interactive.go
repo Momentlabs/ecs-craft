@@ -13,6 +13,7 @@ import (
   "github.com/aws/aws-sdk-go/service/ecs"
   "github.com/aws/aws-sdk-go/service/ec2"
   "github.com/mgutz/ansi"
+  "github.com/op/go-logging"
 )
 
 var (
@@ -37,9 +38,12 @@ var (
   serverContainerNameArg string
   serverTaskArnArg string
 
+  log *logging.Logger
 )
 
 func init() {
+  log = logging.MustGetLogger("ecs-craft")
+
   app = kingpin.New("", "Interactive mode.").Terminate(doTerminate)
 
   // state
@@ -171,7 +175,7 @@ func getServerEnvironment(containerName string, username string) awslib.Containe
     "OPS": username,
     // "WHITELIST": "",
     "MODE": "creative",
-    "VIEW_DISTANCE": "50",
+    "VIEW_DISTANCE": "10",
     "SPAWN_ANIMALS": "true",
     "SPAWN_MONSTERS": "false",
     "SPAWN_NPCS": "true",
@@ -203,13 +207,13 @@ func tasksDescriptionShortString(tasks []*ecs.Task, failures []*ecs.Failure) (s 
       s += containerShortString(containers[0])
     case len(containers) >= 0:
       s += fmt.Sprintf("%s\n", shortArnString(task.TaskDefinitionArn))
-      s += fmt.Sprintf("There were (%d) containers for this task.\n", len(containers))
+      s += fmt.Sprintf("There are (%d) containers assocaited with this task.\n", len(containers))
       for i, c := range containers {
         s+= fmt.Sprintf("%d. %s\n", i+1, containerShortString(c))
       }
     }
   case len(tasks) > 0:
-    s += fmt.Sprintf("There were (%d) tasks.", len(tasks))
+    s += fmt.Sprintf("There are (%d) tasks.", len(tasks))
     for i, task := range tasks {
       s += fmt.Sprintf("***** Task %d. %s", i+1, task)
     }
@@ -217,7 +221,7 @@ func tasksDescriptionShortString(tasks []*ecs.Task, failures []*ecs.Failure) (s 
     s += fmt.Sprintf("No tasks.")
   }
   if len(failures) > 0 {
-    s += fmt.Sprintf("There were (%d) failures.", len(failures))
+    s += fmt.Sprintf("There are (%d) failures.", len(failures))
     for i, failure := range failures {
       s += fmt.Sprintf("\t%d. %s.\n", i+1, failureShortString(failure))
     }
