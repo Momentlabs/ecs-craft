@@ -5,9 +5,12 @@ import (
   "gopkg.in/alecthomas/kingpin.v2"
   "os"
   "ecs-craft/interactive"
-  "ecs-pilot/awslib"
   "github.com/aws/aws-sdk-go/aws"
   "github.com/op/go-logging"
+
+  // Careful now ...
+  // "ecs-pilot/awslib"
+  "github.com/jdrivas/awslib"  
 )
 
 var (
