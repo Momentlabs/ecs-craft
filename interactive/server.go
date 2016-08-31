@@ -15,12 +15,13 @@ import (
   "github.com/aws/aws-sdk-go/service/ec2"
   // "github.com/mgutz/ansi"
 
+  //
   // Careful now ...
-  "mclib"
-  // "github.com/jdrivas/mclib"
-
-  "awslib"
-  // "github.com/jdrivas/awslib"
+  //
+  // "mclib"
+  "github.com/jdrivas/mclib"
+  // "awslib"
+  "github.com/jdrivas/awslib"
 )
 
 const (
@@ -34,8 +35,17 @@ const (
 //
 
 
+const (
+  // TODO: Probably want to set this up as a command line option at some point.
+  // NOTE: We're explicitly NOT using the commaind line awsRegionArg here.
+  // The archive and the rest of interacting with AWS should be separate. At 
+  // least for now. Though I expect that as of this moment, this tool
+  // doesn't work with using a different region for the archive as 
+  // where you're running. But it fairly easily could.
+  DefaultArchiveRegion = "us-east-1"
+  )
 func doLaunchServerCmd(sess *session.Session) (error) {
-  env := getServerEnvironment(serverContainerNameArg, userNameArg)
+  env := getTaskEnvironment(userNameArg, serverNameArg, DefaultArchiveRegion, bucketNameArg)
   if verbose {
     fmt.Printf("Making container with environment: %#v\n", env)
   }
@@ -45,7 +55,7 @@ func doLaunchServerCmd(sess *session.Session) (error) {
 
 func doStartServerCmd(sess *session.Session) (err error) {
 
-  env := getServerEnvironment(serverContainerNameArg, userNameArg)
+  env := getTaskEnvironment(userNameArg, serverNameArg, DefaultArchiveRegion, bucketNameArg)
   serverEnv := env[serverContainerNameArg]
   if useFullURIFlag {
     serverEnv["WORLD"] = snapshotNameArg
@@ -59,7 +69,6 @@ func doStartServerCmd(sess *session.Session) (err error) {
   return err
 }
 
-// launches a server into the cluster for the user with the taskdefiniiton and the overide environment.
 func launchServer(taskDefinition, clusterName, userName string, env awslib.ContainerEnvironmentMap, sess *session.Session) (err error) {
   ecsSvc := ecs.New(sess)
   resp, err := awslib.RunTaskWithEnv(clusterName, taskDefinition, env, ecsSvc)
@@ -72,7 +81,8 @@ func launchServer(taskDefinition, clusterName, userName string, env awslib.Conta
       waitForTaskArn := *tasks[0].TaskArn
       awslib.OnTaskRunning(clusterName, waitForTaskArn, ecsSvc, func(taskDescrip *ecs.DescribeTasksOutput, err error) {
         if err == nil {
-          fmt.Printf("\nServer is now running for user %s on cluster %s (%s).\n", userName, clusterName, time.Since(startTime))
+          fmt.Printf("\n%sServer is now running for user %s on cluster %s (%s).%s\n",
+           highlightColor, userName, clusterName, time.Since(startTime), resetColor)
           fmt.Printf("%s\n", tasksDescriptionShortString(taskDescrip.Tasks, taskDescrip.Failures))
         } 
       })
@@ -94,14 +104,14 @@ func doTerminateServerCmd(ecsSvc *ecs.ECS) (error) {
     tasks := stoppedTaskOutput.Tasks
     failures := stoppedTaskOutput.Failures
     if len(tasks) > 1 {
-      fmt.Printf("Expected 1 task in OnStop got (%d)\n", len(tasks))
+      fmt.Printf("%sExpected 1 task in OnStop got (%d)%s\n", highlightColor, len(tasks), resetColor)
     }
     if len(failures) > 0 {
       fmt.Printf("Received (%d) failures in stopping task.", len(failures))
     }
     if len(tasks) == 1 {
       task := tasks[0]
-      fmt.Printf("Stopped task %s at %s\n", awslib.ShortArnString(task.TaskArn), task.StoppedAt.Local())
+      fmt.Printf("%sStopped task %s at %s\n%s", highlightColor, awslib.ShortArnString(task.TaskArn), task.StoppedAt.Local(), resetColor)
       if len(task.Containers) > 1 {
         fmt.Printf("There were (%d) conatiners associated with this task.\n", len(task.Containers))
       }
@@ -123,10 +133,27 @@ func doTerminateServerCmd(ecsSvc *ecs.ECS) (error) {
   return nil
 }
 
-func getServerEnvironment(containerName string, username string) awslib.ContainerEnvironmentMap {
+
+
+// Environment Variabls
+const (
+  // TODO: This needs to move somewhere (probaby mclib).
+  // But until that get's done. these are copied over into
+  // craft-config. Not very safe
+  ServerUserKey = "SERVER_USER"
+  ServerNameKey = "SERVER_NAME"
+  BackupRegionKey = "CRAFT_BACKUP_REGION"
+  ArchiveRegionKey = "CRAFT_ARCHIVE_REGION"
+  ArchiveBucketKey = "ARCHIVE_BUCKET"
+)
+
+
+func getTaskEnvironment(userName, serverName, region, bucketName string) awslib.ContainerEnvironmentMap {
   cenv := make(awslib.ContainerEnvironmentMap)
-  cenv[containerName] = map[string]string {
-    "OPS": username,
+  cenv[MinecraftServerContainerName] = map[string]string {
+    ServerUserKey: userName,
+    ServerNameKey: serverName,
+    "OPS": userName,
     // "WHITELIST": "",
     "MODE": "creative",
     "VIEW_DISTANCE": "10",
@@ -142,11 +169,23 @@ func getServerEnvironment(containerName string, username string) awslib.Containe
     "ENABLE_RCON": "true",
     "RCON_PORT": "25575",
     "RCON_PASSWORD": "testing",
-    "MOTD": fmt.Sprintf("A neighborhood kept by %s.", username),
+    "MOTD": fmt.Sprintf("A neighborhood kept by %s.", userName),
     "PVP": "false",
     "LEVEL": "world", // World Save name
     "ONLINE_MODE": "true",
     "JVM_OPTS": "-Xmx1024M -Xms1024M",
+  }
+
+  // Set AWS_REGION to pass the region automatically
+  // to the minecraft-controller. The AWS-SDK looks for this
+  // env when setting up a session (this also plays well with
+  // using IAM Roles for credentials).
+  cenv[MinecraftControllerContainerName] = map[string]string{
+    ServerUserKey: userName,
+    ServerNameKey: serverName,
+    ArchiveRegionKey: region,
+    ArchiveBucketKey: bucketName,
+    "AWS_REGION": region,
   }
   return cenv
 }
@@ -222,13 +261,13 @@ func doListServersCmd(ecsSvc *ecs.ECS, ec2Svc *ec2.EC2) (err error) {
 
   //name uptime ip:port arn server-name STATUS backup-name STATUS
   w := tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
-  fmt.Fprintf(w, "%sName\tUptime\tAddress\tServer\tControl\tArn%s\n", emphColor, resetColor)
+  fmt.Fprintf(w, "%sUser\tServer\tUptime\tAddress\tServer\tControl\tArn%s\n", emphColor, resetColor)
   for _, dt := range dtm {
     t := dt.Task
     inst := dt.EC2Instance
     if t != nil && inst != nil {
       cntrs := t.Containers
-      name := awslib.ShortArnString(t.TaskDefinitionArn)
+      // name := awslib.ShortArnString(t.TaskDefinitionArn)
       uptime := 0 * time.Millisecond
       address := fmt.Sprintf("%s:%s", *inst.PublicIpAddress, getMinecraftPort(cntrs))
       if t.StartedAt != nil {uptime = time.Since(*t.StartedAt)}
@@ -237,12 +276,20 @@ func doListServersCmd(ecsSvc *ecs.ECS, ec2Svc *ec2.EC2) (err error) {
       bC := getContainer(t.Containers, MinecraftControllerContainerName)
       bCS := fmt.Sprintf("%s", *bC.LastStatus)
       tArn := awslib.ShortArnString(t.TaskArn)
-
+      cOM := makeContainerOverrideMap(t.Overrides)
+      userName, ok  := cOM.getEnv(MinecraftServerContainerName, ServerUserKey)
+      if !ok {
+        userName = "[NONAME]"
+      }
+      serverName, ok := cOM.getEnv(MinecraftServerContainerName, ServerNameKey)
+      if !ok {
+        serverName = "[NONAME]"
+      }
       color := nullColor
-      if !containerStatusOk(sC) || !containerStatusOk(bC) {
+      if !awslib.ContainerStatusOk(sC) || !awslib.ContainerStatusOk(bC) {
         color = highlightColor
       }
-      fmt.Fprintf(w,"%s%s\t%s\t%s\t%s\t%s\t%s%s\n", color, name, shortDurationString(uptime), address, sCS, bCS, tArn, resetColor)
+      fmt.Fprintf(w,"%s%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n", color, userName, serverName, shortDurationString(uptime), address, sCS, bCS, tArn, resetColor)
       } else {
         if t != nil {
           tArn := awslib.ShortArnString(t.TaskArn)
@@ -267,14 +314,6 @@ func getContainer(containers []*ecs.Container, name string) (c *ecs.Container) {
   return c
 }
 
-const (
-  ContainerStateRunning = "RUNNING"
-  ContainerStatePending = "PENDING"
-)
-
-func containerStatusOk(c *ecs.Container) bool {
-  return *c.LastStatus == "PENDING" || *c.LastStatus == "RUNNING"
-}
 
 func getMinecraftPort(containers []*ecs.Container) (s string) {
   var server *ecs.Container
@@ -296,18 +335,6 @@ func getMinecraftPort(containers []*ecs.Container) (s string) {
   return s
 }
 
-// Name (ShortTaskDefArn), Update, State, Public IP, [PortMaps]
-//      TaskArn
-func shortServerString(task *ecs.Task, container *ecs.Container, instance *ec2.Instance) (s string) {
-  uptime := time.Since(*task.StartedAt)
-  s += fmt.Sprintf("%s (%s),", *container.Name, awslib.ShortArnString(task.TaskDefinitionArn))
-  // s += fmt.Sprintf("%s,", *task.LastStatus)
-  s += fmt.Sprintf(" %s, %s:%s",shortDurationString(uptime), *instance.PublicIpAddress, allBindingsString(container.NetworkBindings))
-  // s += fmt.Sprintf("%s (%s), %s, started %s ago - %s %s", *container.Name, awslib.ShortArnString(task.TaskDefinitionArn), 
-  //   *task.LastStatus, shortDurationString(uptime), *instance.PublicIpAddress, allBindingsString(container.NetworkBindings))
-  s += fmt.Sprintf("\n\t%s", *task.TaskArn)    
-  return s
-}
 
 func shortDurationString(d time.Duration) (s string) {
   days := int(d.Hours()) / 24
@@ -360,7 +387,7 @@ func doDescribeAllServersCmd(ecsSvc *ecs.ECS, ec2Svc *ec2.EC2) (error) {
       fmt.Printf("Task failure - Reason: %s, Resource ARN: %s\n", *dtask.Failure.Reason, *dtask.Failure.Arn)
     }
     if dtask.CIFailure != nil {
-      fmt.Printf("ContainerInstane failure - Reason: %s, Resource ARN: %s\n", *dtask.CIFailure.Reason, *dtask.CIFailure.Arn)
+      fmt.Printf("ContainerInstance failure - Reason: %s, Resource ARN: %s\n", *dtask.CIFailure.Reason, *dtask.CIFailure.Arn)
     }
   }
 
@@ -388,6 +415,8 @@ func networkBindingsString(bindings []*ecs.NetworkBinding) (s string) {
   return s
 }
 
+
+// Overrides by container.
 type ContainerOverrideMap map[string]*ecs.ContainerOverride
 
 func makeContainerOverrideMap(to *ecs.TaskOverride) (ContainerOverrideMap) { 
@@ -396,6 +425,18 @@ func makeContainerOverrideMap(to *ecs.TaskOverride) (ContainerOverrideMap) {
     coMap[*co.Name] = co
   }
   return coMap
+}
+
+func (c ContainerOverrideMap) getEnv(containerName, key string) (s string, ok bool) {
+  env := c[containerName].Environment
+  for _, kvp := range env {
+    if *kvp.Name == key {
+      s = *kvp.Value
+      ok = true
+      break
+    }
+  }
+  return s, ok
 }
 
 func overrideString(co *ecs.ContainerOverride, perLine int) (s string) {

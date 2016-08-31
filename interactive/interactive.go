@@ -19,8 +19,8 @@ import (
   "github.com/alecthomas/kingpin"
 
   // Careful now ...
-  "awslib"
-  // "github.com/jdrivas/awslib"
+  // "awslib"
+  "github.com/jdrivas/awslib"
 
 )
 
@@ -47,6 +47,7 @@ var (
   // AWS paramaters
   clusterNameArg string
   serverTaskArg string
+  // TODO: remove this. We don't use it anymore.
   serverContainerNameArg string
   serverTaskArnArg string
   bucketNameArg string
@@ -67,6 +68,7 @@ var (
 // Text Coloring
 var (
   nullColor = fmt.Sprintf("%s", "\x00\x00\x00\x00\x00\x00\x00")
+  defaultColor = fmt.Sprintf("%s%s", "\x00\x00", ansi.ColorCode("default"))
   emphColor = fmt.Sprintf(ansi.ColorCode("default+b"))
   highlightColor = fmt.Sprintf(ansi.ColorCode("red+b"))
   resetColor = fmt.Sprintf(ansi.ColorCode("reset"))
@@ -90,6 +92,7 @@ func init() {
 
   serverLaunchCmd = serverCmd.Command("launch", "Launch a new minecraft server for a user in a cluster.")
   serverLaunchCmd.Arg("user", "User name of the server").Required().StringVar(&userNameArg)
+  serverLaunchCmd.Arg("server-name","Name of the server. This is an identifier for the serve. (e.g. test-server, world-play).").Required().StringVar(&serverNameArg)
   serverLaunchCmd.Arg("cluster", "ECS cluster to launch the server in.").Default("minecraft").StringVar(&clusterNameArg)
   serverLaunchCmd.Arg("ecs-task", "ECS Task that represents a running minecraft server.").Default("minecraft-ecs").StringVar(&serverTaskArg)
   serverLaunchCmd.Arg("ecs-conatiner-name", "Container name for the minecraft server (used for environment variables.").Default("minecraft").StringVar(&serverContainerNameArg)
@@ -97,8 +100,8 @@ func init() {
   serverStartCmd = serverCmd.Command("start", "Start a server from a snapshot.")
   serverStartCmd.Flag("useFullURI", "Use a full URI for the snapshot as opposed to a named snapshot.").Default("false").BoolVar(&useFullURIFlag)
   serverStartCmd.Arg("user","User name for the server.").Required().StringVar(&userNameArg)
+  serverStartCmd.Arg("server-name","Name of the server. This is an identifier for the serve. (e.g. test-server, world-play).").Required().StringVar(&serverNameArg)
   serverStartCmd.Arg("snapshot", "Name of snapshot for starting server.").Required().StringVar(&snapshotNameArg)
-  serverStartCmd.Arg("server-name", "Name of the server to use").Required().StringVar(&serverNameArg)
   serverStartCmd.Arg("cluster", "ECS Cluster for the server containers.").Default("minecraft").StringVar(&clusterNameArg)
   serverStartCmd.Arg("ecs-task", "ECS Task that represents a running minecraft server.").Default("minecraft-ecs").StringVar(&serverTaskArg)
   serverStartCmd.Arg("ecs-conatiner-name", "Container name for the minecraft server (used for environment variables.").Default("minecraft").StringVar(&serverContainerNameArg)

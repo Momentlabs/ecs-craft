@@ -14,12 +14,8 @@ import (
 
   //
   // Careful now ...
-
-  // "awslib/awslib"
-  // "github.com/jdrivas/awslib"
-
-  "mclib"
-  // "github.com/jdrivas/mclib"
+  // "mclib"
+  "github.com/jdrivas/mclib"
 
 )
 
@@ -30,10 +26,9 @@ func doSnapshotListCmd(sess *session.Session) (error) {
     fmt.Printf("%d snapshots in bucket %s as of: %s.\n", len(snaps), bucketNameArg, time.Now().Local())
     tabFlags := tabwriter.StripEscape | tabwriter.DiscardEmptyColumns //| tabwriter.Debug
     w := tabwriter.NewWriter(os.Stdout, 19, 8, 1, ' ', tabFlags)
-    // fmt.Fprintf(w, "%sUser\tServer\tType\tKey%s\n", bold, reset)
-    fmt.Fprintf(w, "User\tServer\tLastMode\tKey\n")
+    fmt.Fprintf(w, "%sUser\tServer\tLastMode\tKey%s\n", emphColor, resetColor)
     for _, a := range snaps {   //  snaps is a list of Archives
-      fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", a.UserName, a.ServerName, a.LastMod(), a.S3Key())
+      fmt.Fprintf(w, "%s%s\t%s\t%s\t%s%s\n", defaultColor, a.UserName, a.ServerName, a.LastMod(), a.S3Key(), resetColor)
       w.Flush()
     }
   }
