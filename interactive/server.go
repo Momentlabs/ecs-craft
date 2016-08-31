@@ -262,15 +262,15 @@ func doListServersCmd(ecsSvc *ecs.ECS, ec2Svc *ec2.EC2) (err error) {
   //name uptime ip:port arn server-name STATUS backup-name STATUS
   w := tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
   fmt.Fprintf(w, "%sUser\tServer\tUptime\tAddress\tServer\tControl\tArn%s\n", emphColor, resetColor)
-  for _, dt := range dtm {
+  // for _, dt := range dtm {
+  for _, dt := range dtm.DeepTasks(awslib.ByReverseUptime) {
     t := dt.Task
     inst := dt.EC2Instance
     if t != nil && inst != nil {
       cntrs := t.Containers
-      // name := awslib.ShortArnString(t.TaskDefinitionArn)
-      uptime := 0 * time.Millisecond
       address := fmt.Sprintf("%s:%s", *inst.PublicIpAddress, getMinecraftPort(cntrs))
-      if t.StartedAt != nil {uptime = time.Since(*t.StartedAt)}
+      var uptime time.Duration
+      if uptime, err = dt.Uptime(); err != nil { uptime = 0 * time.Millisecond}  // fail silently.
       sC := getContainer(cntrs, MinecraftServerContainerName)
       sCS := fmt.Sprintf("%s", *sC.LastStatus)
       bC := getContainer(t.Containers, MinecraftControllerContainerName)
@@ -289,7 +289,9 @@ func doListServersCmd(ecsSvc *ecs.ECS, ec2Svc *ec2.EC2) (err error) {
       if !awslib.ContainerStatusOk(sC) || !awslib.ContainerStatusOk(bC) {
         color = highlightColor
       }
-      fmt.Fprintf(w,"%s%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n", color, userName, serverName, shortDurationString(uptime), address, sCS, bCS, tArn, resetColor)
+
+      fmt.Fprintf(w,"%s%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n", color, userName, serverName, 
+        shortDurationString(uptime), address, sCS, bCS, tArn, resetColor)
       } else {
         if t != nil {
           tArn := awslib.ShortArnString(t.TaskArn)

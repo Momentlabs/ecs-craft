@@ -4,6 +4,7 @@ import (
   "fmt"
   // "io"
   "os"
+  "sort"
   "time"
   "text/tabwriter"
   // "github.com/aws/aws-sdk-go/aws"
@@ -23,6 +24,7 @@ func doSnapshotListCmd(sess *session.Session) (error) {
   // resp, err := GetSnapshotListForUser(userNameArg)
   snaps, err := mclib.GetSnapshotList(userNameArg, bucketNameArg, sess)
   if err == nil {
+    sort.Sort(mclib.ByLastMod(snaps))
     fmt.Printf("%d snapshots in bucket %s as of: %s.\n", len(snaps), bucketNameArg, time.Now().Local())
     tabFlags := tabwriter.StripEscape | tabwriter.DiscardEmptyColumns //| tabwriter.Debug
     w := tabwriter.NewWriter(os.Stdout, 19, 8, 1, ' ', tabFlags)
