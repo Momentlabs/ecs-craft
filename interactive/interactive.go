@@ -70,6 +70,7 @@ var (
   nullColor = fmt.Sprintf("%s", "\x00\x00\x00\x00\x00\x00\x00")
   defaultColor = fmt.Sprintf("%s%s", "\x00\x00", ansi.ColorCode("default"))
   emphColor = fmt.Sprintf(ansi.ColorCode("default+b"))
+  emphBlueColor = fmt.Sprintf(ansi.ColorCode("blue+b"))
   highlightColor = fmt.Sprintf(ansi.ColorCode("red+b"))
   resetColor = fmt.Sprintf(ansi.ColorCode("reset"))
 )
@@ -148,15 +149,15 @@ func DoICommand(line string, sess *session.Session, ecsSvc *ecs.ECS, ec2Svc *ec2
     switch command {
       case debugCmd.FullCommand(): err = doDebug()
       case verboseCmd.FullCommand(): err = doVerbose()
-      case exit.FullCommand(): err = doQuit(ecsSvc)
-      case quit.FullCommand(): err = doQuit(ecsSvc)
+      case exit.FullCommand(): err = doQuit(sess)
+      case quit.FullCommand(): err = doQuit(sess)
 
       // Server Commands
       case serverLaunchCmd.FullCommand(): err = doLaunchServerCmd(sess)
       case serverStartCmd.FullCommand(): err = doStartServerCmd(sess)
-      case serverTerminateCmd.FullCommand(): err = doTerminateServerCmd(ecsSvc)
-      case serverListCmd.FullCommand(): err = doListServersCmd(ecsSvc, ec2Svc)
-      case serverDescribeAllCmd.FullCommand(): err = doDescribeAllServersCmd(ecsSvc, ec2Svc)
+      case serverTerminateCmd.FullCommand(): err = doTerminateServerCmd(sess)
+      case serverListCmd.FullCommand(): err = doListServersCmd(sess)
+      case serverDescribeAllCmd.FullCommand(): err = doDescribeAllServersCmd(sess)
       case serverDescribeCmd.FullCommand(): err = doDescribeServerCmd()
 
       // Snapshot commands
@@ -194,9 +195,10 @@ func toggleDebug() bool {
   return debug
 }
 
-func doQuit(ecsSvc *ecs.ECS) (error) {
+func doQuit(sess *session.Session) (error) {
 
-  clusters, err := awslib.GetAllClusterDescriptions(ecsSvc)
+  clusters, err := awslib.GetAllClusterDescriptions(sess)
+  clusters.Sort(awslib.ByReverseActivity)
   if err != nil {
     fmt.Printf("doQuit: Error getting cluster data: %s\n", err)
   } else {

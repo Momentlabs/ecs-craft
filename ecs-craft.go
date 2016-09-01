@@ -9,8 +9,8 @@ import (
   "github.com/op/go-logging"
 
   // Careful now ...
-  // "ecs-pilot/awslib"
-  "github.com/jdrivas/awslib"  
+  // "awslib"
+  "github.com/jdrivas/awslib" 
 )
 
 var (
