@@ -177,7 +177,7 @@ func doVerbose() (error) {
 }
 
 func toggleVerbose() bool {
-  verbose = verbose
+  verbose = !verbose
   return verbose
 }
 

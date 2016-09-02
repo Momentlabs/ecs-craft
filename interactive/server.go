@@ -38,12 +38,10 @@ const (
   // doesn't work with using a different region for the archive as 
   // where you're running. But it fairly easily could.
   DefaultArchiveRegion = "us-east-1"
+  DefaultArchiveBucket = "craft-config-test"
 )
 func doLaunchServerCmd(sess *session.Session) (error) {
   env := getTaskEnvironment(userNameArg, serverNameArg, DefaultArchiveRegion, bucketNameArg)
-  if verbose {
-    fmt.Printf("Making container with environment: %#v\n", env)
-  }
   err := launchServer(serverTaskArg, clusterNameArg, userNameArg, env, sess)
   return err
 }
@@ -57,22 +55,32 @@ func doStartServerCmd(sess *session.Session) (err error) {
   } else {
     serverEnv["WORLD"] = mclib.SnapshotURI(bucketNameArg, userNameArg, serverNameArg, snapshotNameArg)
   }
-  if debug {
-    fmt.Printf("Making the container with environment: %#v\n", env)
-  }
   err = launchServer(serverTaskArg, clusterNameArg, userNameArg, env, sess)
   return err
 }
 
+// TODO: DONT launch a server if there is already one with the same user and server names.
 func launchServer(taskDefinition, clusterName, userName string, env awslib.ContainerEnvironmentMap, sess *session.Session) (err error) {
-  ecsSvc := ecs.New(sess)
+
+  serverEnv := env[mclib.MinecraftServerContainerName]
+  controlEnv := env[mclib.MinecraftControllerContainerName]
+  if controlEnv[mclib.ArchiveBucketKey] == "" {
+    controlEnv[mclib.ArchiveBucketKey] = DefaultArchiveBucket
+  }
+  if verbose  || debug {
+    fmt.Printf("Making container with environment: %#v\n", env)
+  }
+
+  ecsSvc := ecs.New(sess)  // TODO: push the session to RunTaskWithEnv ?
   resp, err := awslib.RunTaskWithEnv(clusterName, taskDefinition, env, ecsSvc)
   startTime := time.Now()
   tasks := resp.Tasks
-  // failures := resp.Failures
+  failures := resp.Failures
   if err == nil {
-    fmt.Printf("Launched %s for %s\n", env[mclib.ServerNameKey], env[mclib.ServerUserKey])
-    if len(tasks) == 1 {
+    newUser := serverEnv[mclib.ServerUserKey]
+    serverName := serverEnv[mclib.ServerNameKey]
+    fmt.Printf("%s launched %s for %s\n", startTime.Local().Format(time.RFC1123), serverName, newUser)
+    if len(tasks) == 1  {
       waitForTaskArn := *tasks[0].TaskArn
       awslib.OnTaskRunning(clusterName, waitForTaskArn, ecsSvc, func(taskDescrip *ecs.DescribeTasksOutput, err error) {
         if err == nil {
@@ -90,8 +98,22 @@ func launchServer(taskDefinition, clusterName, userName string, env awslib.Conta
         }
       })
     } else {
-      fmt.Printf("%sGot more than 1 task back. Will not upate on further progress.%s\n",
-        highlightColor, resetColor)
+
+      if len(tasks) > 0 {
+        fmt.Printf("%sGot something other than 1 task back. Will not upate on further progress.%s\n", highlightColor, resetColor)
+        for i, t := range tasks {
+          fmt.Printf("%d:  %#v", i+1, t)
+        }
+      }
+    }
+    if len(failures) > 1 {
+      fmt.Printf("%sGot (%d) failures.%s\n", highlightColor, len(failures), resetColor)
+      w := tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
+      fmt.Fprintf(w, "Failure\tArn\n")
+      for _, failure := range failures {
+        fmt.Fprintf(w, "%s\t%s\n",  *failure.Reason, *failure.Arn)
+      }
+      w.Flush()
     }
   }
   return err
@@ -103,7 +125,7 @@ func doTerminateServerCmd(sess *session.Session) (error) {
   if err != nil { return fmt.Errorf("terminate server failed: %s", err) }
 
   fmt.Printf("Server Task stopping: %s.\n", awslib.ShortArnString(&serverTaskArnArg))
-  awslib.OnTaskStopped(clusterNameArg, serverTaskArnArg,  sess, func(stoppedTaskOutput *ecs.DescribeTasksOutput, err error){
+  awslib.OnTaskStopped(clusterNameArg, serverTaskArnArg,  sess, func(stoppedTaskOutput *ecs.DescribeTasksOutput, err error) {
     if stoppedTaskOutput == nil {
       fmt.Printf("Task %s stopped.\nMissing Task Object.\n", serverTaskArnArg)
       return
@@ -131,9 +153,12 @@ func doTerminateServerCmd(sess *session.Session) (error) {
       }
     }
     if len(failures) > 0 {
-      for i, failure := range failures {
-        fmt.Printf("%d. Failure on %s, Reason: %s\n", i+1, *failure.Arn, *failure.Reason)
+      w := tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
+      fmt.Fprintf(w, "Arn\tFailure\n")
+      for _, failure := range failures {
+        fmt.Fprintf(w, "%s\t%s\n", *failure.Arn, *failure.Reason)
       }
+      w.Flush()
     }
   })
 
