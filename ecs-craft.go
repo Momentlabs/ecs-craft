@@ -1,10 +1,11 @@
 package main
 
 import (
-  // "fmt"
+  "fmt"
   "gopkg.in/alecthomas/kingpin.v2"
   "os"
   "ecs-craft/interactive"
+  "ecs-craft/version"
   "github.com/aws/aws-sdk-go/aws"
   "github.com/op/go-logging"
 
@@ -20,9 +21,12 @@ var (
   regionArg                         string
   profileArg                        string
 
+
+
   // Prompt for Commands
   interCommand *kingpin.CmdClause
 
+  versionCmd *kingpin.CmdClause
   // serverCmd *kingpin.CmdClause
   // serverLaunchCmd *kingpin.CmdClause
   // serverListCmd *kingpin.CmdClause
@@ -40,7 +44,7 @@ func init() {
   app.Flag("profile", "AWS profile to use for credentials.").Default("minecraft").StringVar(&profileArg)
 
   interCommand = app.Command("interactive", "Prompt for commands.")
-
+  versionCmd = app.Command("version", "print version and exit.")
   kingpin.CommandLine.Help = `A command-line minecraft config tool.`
 }
 
@@ -62,6 +66,7 @@ func main() {
 
   // List of commands as parsed matched against functions to execute the commands.
   commandMap := map[string]func(string) {
+    versionCmd.FullCommand(): doVersion,
     // sub1_command1.FullCommand(): doSub1_Command1,
   }
 
@@ -72,6 +77,10 @@ func main() {
     commandMap[command]("")
   }
 
+}
+
+func doVersion(string) {
+  fmt.Println(version.Version)
 }
 
 func setLogLevel(l logging.Level) {

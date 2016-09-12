@@ -37,7 +37,14 @@ gulp.task('test', function() {
 })
 
 gulp.task('build', function() {
-  build = child.spawnSync("go", ["install"])
+  var now = Math.round(new Date() / 1000);
+  var timeStampFlag  = "-X ecs-craft/version.unixtime=" + now;
+  var gitHash = child.spawnSync("git", ["rev-parse", "HEAD"]).stdout.toString()
+  var gitHashFlag = "-X ecs-craft/version.githash="  + gitHash;
+  var environFlag = "-X ecs-craft/version.environ=" + "dev";
+  var ldFlags = "-ldflags=" + timeStampFlag + " " + environFlag + " " + gitHashFlag
+
+  build = child.spawnSync("go", ["install", ldFlags])
   if(build.status == 0) {
     util.log(chalk.white.bgBlue.bold(' Go Install Successful '));
   } else {
