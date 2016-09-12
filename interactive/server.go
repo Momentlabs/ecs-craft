@@ -42,6 +42,17 @@ const (
 )
 func doLaunchServerCmd(sess *session.Session) (error) {
   env := getTaskEnvironment(userNameArg, serverNameArg, DefaultArchiveRegion, bucketNameArg)
+
+  serverEnv := env[mclib.MinecraftServerContainerName]
+  contEnv := env[mclib.MinecraftControllerContainerName]
+  fmt.Println("Launching minecraft server:")
+  w := tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
+  fmt.Fprintf(w, "%sCluster\tUser\tName\tTask\tRegion\tBucket%s\n", emphColor, resetColor)
+  fmt.Fprintf(w, "%s%s\t%s\t%s\t%s\t%s\t%s%s\n", nullColor,
+    clusterNameArg, serverEnv[mclib.ServerUserKey], contEnv[mclib.ServerNameKey], serverTaskArg, 
+    contEnv[mclib.ArchiveRegionKey], contEnv[mclib.ArchiveBucketKey], resetColor)
+  w.Flush()
+
   err := launchServer(serverTaskArg, clusterNameArg, userNameArg, env, sess)
   return err
 }
@@ -49,12 +60,24 @@ func doLaunchServerCmd(sess *session.Session) (error) {
 func doStartServerCmd(sess *session.Session) (err error) {
 
   env := getTaskEnvironment(userNameArg, serverNameArg, DefaultArchiveRegion, bucketNameArg)
+  controllerEnv := env[mclib.MinecraftControllerContainerName]
   serverEnv := env[serverContainerNameArg]
   if useFullURIFlag {
+    // TODO:
     serverEnv["WORLD"] = snapshotNameArg
   } else {
     serverEnv["WORLD"] = mclib.SnapshotURI(bucketNameArg, userNameArg, serverNameArg, snapshotNameArg)
   }
+
+  fmt.Println("Startig minecraft server:")
+  w := tabwriter.NewWriter(os.Stdout, 4, 8, 8, ' ', 0)
+  fmt.Fprintf(w, "%sCluster\tUser\tName\tTask\tRegion\tBucket\tWorld%s\n", emphColor, resetColor)
+  fmt.Fprintf(w, "%s%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n.", nullColor,
+    clusterNameArg, serverEnv[mclib.ServerUserKey], serverEnv[mclib.ServerNameKey], serverTaskArg, 
+    controllerEnv[mclib.ArchiveRegionKey], controllerEnv[mclib.ArchiveBucketKey], serverEnv["WORLD"],
+    resetColor)
+  w.Flush()
+
   err = launchServer(serverTaskArg, clusterNameArg, userNameArg, env, sess)
   return err
 }
@@ -274,9 +297,14 @@ func doListServersCmd(sess *session.Session) (err error) {
   dtm, err := awslib.GetDeepTasks(clusterNameArg, sess)
   if err != nil {return err}
 
+  if len(dtm) == 0 {
+    fmt.Printf("%sThere are no servuers on cluster: %s.%s\n", emphBlueColor, clusterNameArg, resetColor)
+    return nil
+  }
+
   //name uptime ip:port arn server-name STATUS backup-name STATUS
   w := tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
-  fmt.Fprintf(w, "%sUser\tServer\tUptime\tAddress\tServer\tControl\tArn%s\n", emphColor, resetColor)
+  fmt.Fprintf(w, "%sUser\tServer\tUptime\tAddress\tServer\tControl\tArn%s\n", emphBlueColor, resetColor)
   // for _, dt := range dtm {
   for _, dt := range dtm.DeepTasks(awslib.ByReverseUptime) {
     t := dt.Task
