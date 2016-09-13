@@ -47,13 +47,13 @@ func doLaunchServerCmd(sess *session.Session) (error) {
   contEnv := env[mclib.MinecraftControllerContainerName]
   fmt.Println("Launching minecraft server:")
   w := tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
-  fmt.Fprintf(w, "%sCluster\tUser\tName\tTask\tRegion\tBucket%s\n", emphColor, resetColor)
+  fmt.Fprintf(w, "%sCluster\tUser\tName\tTask\tRegion\tBucket%s\n", titleColor, resetColor)
   fmt.Fprintf(w, "%s%s\t%s\t%s\t%s\t%s\t%s%s\n", nullColor,
-    clusterNameArg, serverEnv[mclib.ServerUserKey], contEnv[mclib.ServerNameKey], serverTaskArg, 
+    currentCluster, serverEnv[mclib.ServerUserKey], contEnv[mclib.ServerNameKey], serverTaskArg, 
     contEnv[mclib.ArchiveRegionKey], contEnv[mclib.ArchiveBucketKey], resetColor)
   w.Flush()
 
-  err := launchServer(serverTaskArg, clusterNameArg, userNameArg, env, sess)
+  err := launchServer(serverTaskArg, currentCluster, userNameArg, env, sess)
   return err
 }
 
@@ -71,14 +71,14 @@ func doStartServerCmd(sess *session.Session) (err error) {
 
   fmt.Println("Startig minecraft server:")
   w := tabwriter.NewWriter(os.Stdout, 4, 8, 8, ' ', 0)
-  fmt.Fprintf(w, "%sCluster\tUser\tName\tTask\tRegion\tBucket\tWorld%s\n", emphColor, resetColor)
+  fmt.Fprintf(w, "%sCluster\tUser\tName\tTask\tRegion\tBucket\tWorld%s\n", titleColor, resetColor)
   fmt.Fprintf(w, "%s%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n.", nullColor,
-    clusterNameArg, serverEnv[mclib.ServerUserKey], serverEnv[mclib.ServerNameKey], serverTaskArg, 
+    currentCluster, serverEnv[mclib.ServerUserKey], serverEnv[mclib.ServerNameKey], serverTaskArg, 
     controllerEnv[mclib.ArchiveRegionKey], controllerEnv[mclib.ArchiveBucketKey], serverEnv["WORLD"],
     resetColor)
   w.Flush()
 
-  err = launchServer(serverTaskArg, clusterNameArg, userNameArg, env, sess)
+  err = launchServer(serverTaskArg, currentCluster, userNameArg, env, sess)
   return err
 }
 
@@ -110,27 +110,27 @@ func launchServer(taskDefinition, clusterName, userName string, env awslib.Conta
           s, err  := mclib.GetServer(clusterName, waitForTaskArn, sess)
           if err == nil {
             fmt.Printf("\n%s%s for %s %s:%d is now running (%s). %s\n",
-             highlightColor, s.Name, s.User, s.ServerIp, s.ServerPort, time.Since(startTime), resetColor)
+             successColor, s.Name, s.User, s.ServerIp, s.ServerPort, time.Since(startTime), resetColor)
           } else {
             fmt.Printf("\n%sServer is now running for user %s on %s. (%s).%s\n",
-             highlightColor, userName, clusterName, time.Since(startTime), resetColor)
+             successColor, userName, clusterName, time.Since(startTime), resetColor)
           }
         } else {
           fmt.Printf("\n%sErrr on waiting for server to start running: %s%s\n", 
-            highlightColor, err, resetColor)
+            failColor, err, resetColor)
         }
       })
     } else {
 
       if len(tasks) > 0 {
-        fmt.Printf("%sGot something other than 1 task back. Will not upate on further progress.%s\n", highlightColor, resetColor)
+        fmt.Printf("%sGot something other than 1 task back. Will not upate on further progress.%s\n", warnColor, resetColor)
         for i, t := range tasks {
           fmt.Printf("%d:  %#v", i+1, t)
         }
       }
     }
     if len(failures) > 1 {
-      fmt.Printf("%sGot (%d) failures.%s\n", highlightColor, len(failures), resetColor)
+      fmt.Printf("%sGot (%d) failures.%s\n", failColor, len(failures), resetColor)
       w := tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
       fmt.Fprintf(w, "Failure\tArn\n")
       for _, failure := range failures {
@@ -144,11 +144,11 @@ func launchServer(taskDefinition, clusterName, userName string, env awslib.Conta
 
 func doTerminateServerCmd(sess *session.Session) (error) {
 
-  _, err := awslib.StopTask(clusterNameArg, serverTaskArnArg, sess)
+  _, err := awslib.StopTask(currentCluster, serverTaskArnArg, sess)
   if err != nil { return fmt.Errorf("terminate server failed: %s", err) }
 
   fmt.Printf("Server Task stopping: %s.\n", awslib.ShortArnString(&serverTaskArnArg))
-  awslib.OnTaskStopped(clusterNameArg, serverTaskArnArg,  sess, func(stoppedTaskOutput *ecs.DescribeTasksOutput, err error) {
+  awslib.OnTaskStopped(currentCluster, serverTaskArnArg,  sess, func(stoppedTaskOutput *ecs.DescribeTasksOutput, err error) {
     if stoppedTaskOutput == nil {
       fmt.Printf("Task %s stopped.\nMissing Task Object.\n", serverTaskArnArg)
       return
@@ -156,14 +156,14 @@ func doTerminateServerCmd(sess *session.Session) (error) {
     tasks := stoppedTaskOutput.Tasks
     failures := stoppedTaskOutput.Failures
     if len(tasks) > 1 {
-      fmt.Printf("%sExpected 1 task in OnStop got (%d)%s\n", highlightColor, len(tasks), resetColor)
+      fmt.Printf("%sExpected 1 task in OnStop got (%d)%s\n", warnColor, len(tasks), resetColor)
     }
     if len(failures) > 0 {
-      fmt.Printf("Received (%d) failures in stopping task.", len(failures))
+      fmt.Printf("%sReceived (%d) failures in stopping task.%s\n", failColor, len(failures), resetColor)
     }
     if len(tasks) == 1 {
       task := tasks[0]
-      fmt.Printf("%sStopped task %s at %s\n%s", highlightColor, awslib.ShortArnString(task.TaskArn), task.StoppedAt.Local(), resetColor)
+      fmt.Printf("%sStopped task %s at %s\n%s", successColor, awslib.ShortArnString(task.TaskArn), task.StoppedAt.Local(), resetColor)
       if len(task.Containers) > 1 {
         fmt.Printf("There were (%d) conatiners associated with this task.\n", len(task.Containers))
       }
@@ -294,17 +294,17 @@ func failureShortString(failure *ecs.Failure) (s string){
 
 
 func doListServersCmd(sess *session.Session) (err error) { 
-  dtm, err := awslib.GetDeepTasks(clusterNameArg, sess)
+  dtm, err := awslib.GetDeepTasks(currentCluster, sess)
   if err != nil {return err}
 
   if len(dtm) == 0 {
-    fmt.Printf("%sThere are no servuers on cluster: %s.%s\n", emphBlueColor, clusterNameArg, resetColor)
+    fmt.Printf("%sThere are no servuers on cluster: %s.%s\n", emphBlueColor, currentCluster, resetColor)
     return nil
   }
 
   //name uptime ip:port arn server-name STATUS backup-name STATUS
   w := tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
-  fmt.Fprintf(w, "%sUser\tServer\tUptime\tAddress\tServer\tControl\tArn%s\n", emphBlueColor, resetColor)
+  fmt.Fprintf(w, "%sUser\tServer\tUptime\tAddress\tServer\tControl\tArn%s\n", titleColor, resetColor)
   // for _, dt := range dtm {
   for _, dt := range dtm.DeepTasks(awslib.ByReverseUptime) {
     t := dt.Task
@@ -315,22 +315,27 @@ func doListServersCmd(sess *session.Session) (err error) {
       var uptime time.Duration
       if uptime, err = dt.Uptime(); err != nil { uptime = 0 * time.Millisecond}  // fail silently.
       sC := getContainer(cntrs, mclib.MinecraftServerContainerName)
-      sCS := fmt.Sprintf("%s", *sC.LastStatus)
+      sCS := "NO-SERVER"
+      if sC != nil { sCS = fmt.Sprintf("%s", *sC.LastStatus) }
       bC := getContainer(t.Containers, mclib.MinecraftControllerContainerName)
-      bCS := fmt.Sprintf("%s", *bC.LastStatus)
+      bCS := "NO-CONTROLLER"
+      if bC != nil { bCS = fmt.Sprintf("%s", *bC.LastStatus) }
       tArn := awslib.ShortArnString(t.TaskArn)
       cOM := makeContainerOverrideMap(t.Overrides)
+
       userName, ok  := cOM.getEnv(mclib.MinecraftServerContainerName, mclib.ServerUserKey)
       if !ok {
         userName = "[NONAME]"
       }
+
       serverName, ok := cOM.getEnv(mclib.MinecraftServerContainerName, mclib.ServerNameKey)
       if !ok {
         serverName = "[NONAME]"
       }
+
       color := nullColor
-      if !awslib.ContainerStatusOk(sC) || !awslib.ContainerStatusOk(bC) {
-        color = highlightColor
+      if (sC != nil && !awslib.ContainerStatusOk(sC)) || (bC != nil && !awslib.ContainerStatusOk(bC)) {
+        color = failColor
       }
 
       fmt.Fprintf(w,"%s%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n", color, userName, serverName, 
@@ -361,21 +366,26 @@ func getContainer(containers []*ecs.Container, name string) (c *ecs.Container) {
 
 
 func getMinecraftPort(containers []*ecs.Container) (s string) {
+
   var server *ecs.Container
   for _, container := range containers {
     if *container.Name == mclib.MinecraftServerContainerName { server = container}
   }
   
-  var serverHostPort  *int64
-  for _, binding := range server.NetworkBindings {
-    if *binding.ContainerPort == mclib.ServerPortDefault {
-      serverHostPort = binding.HostPort
-    }
-  }
-  if serverHostPort == nil {
-    s = "PORT NOT ASSIGNED"
+  if server == nil {
+    s = "NO MINECRAFT CONTAINER"
   } else {
-    s = fmt.Sprintf("%d", *serverHostPort)
+    var serverHostPort  *int64
+    for _, binding := range server.NetworkBindings {
+      if *binding.ContainerPort == mclib.ServerPortDefault {
+        serverHostPort = binding.HostPort
+      }
+    }
+    if serverHostPort == nil {
+      s = "PORT NOT ASSIGNED"
+    } else {
+      s = fmt.Sprintf("%d", *serverHostPort)
+    }
   }
   return s
 }
@@ -405,7 +415,7 @@ func allBindingsString(bindings []*ecs.NetworkBinding) (s string) {
 
 func doDescribeAllServersCmd(sess *session.Session) (error) {
   // TODO: This assumes that all tasks in a cluster a minecraft servers.
-  dtm, err := awslib.GetDeepTasks(clusterNameArg, sess)
+  dtm, err := awslib.GetDeepTasks(currentCluster, sess)
   if err != nil {return err}
 
   taskCount := 0
@@ -473,12 +483,14 @@ func makeContainerOverrideMap(to *ecs.TaskOverride) (ContainerOverrideMap) {
 }
 
 func (c ContainerOverrideMap) getEnv(containerName, key string) (s string, ok bool) {
-  env := c[containerName].Environment
-  for _, kvp := range env {
-    if *kvp.Name == key {
-      s = *kvp.Value
-      ok = true
-      break
+  if co, ok := c[containerName]; ok {
+    env := co.Environment
+    for _, kvp := range env {
+      if *kvp.Name == key {
+        s = *kvp.Value
+        ok = true
+        break
+      }
     }
   }
   return s, ok
@@ -508,7 +520,7 @@ func commandString(c []*string) (s string) {
 
 
 func doDescribeServerCmd() (error) {
-  fmt.Printf("Describe server for user \"%s\" in cluster \"%s\".\n", userNameArg, clusterNameArg)
+  fmt.Printf("Describe server for user \"%s\" in cluster \"%s\".\n", userNameArg, currentCluster)
   return nil
 }
 

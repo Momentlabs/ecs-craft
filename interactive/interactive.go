@@ -24,7 +24,14 @@ import (
 
 )
 
+const(
+  defaultCluster = "minecraft"
+)
+
 var (
+
+  // State variables
+  currentCluster = defaultCluster
 
   app *kingpin.Application
 
@@ -36,6 +43,10 @@ var (
   debug bool
   testString []string
 
+  clusterCmd *kingpin.CmdClause
+  clusterListCmd *kingpin.CmdClause
+  clusterStatusCmd *kingpin.CmdClause
+
   serverCmd *kingpin.CmdClause
   serverLaunchCmd *kingpin.CmdClause
   serverStartCmd *kingpin.CmdClause
@@ -45,8 +56,9 @@ var (
   serverDescribeCmd *kingpin.CmdClause
 
   // AWS paramaters
-  clusterNameArg string
+  clusterArg string
   serverTaskArg string
+
   // TODO: remove this. We don't use it anymore.
   serverContainerNameArg string
   serverTaskArnArg string
@@ -69,10 +81,20 @@ var (
 var (
   nullColor = fmt.Sprintf("%s", "\x00\x00\x00\x00\x00\x00\x00")
   defaultColor = fmt.Sprintf("%s%s", "\x00\x00", ansi.ColorCode("default"))
-  emphColor = fmt.Sprintf(ansi.ColorCode("default+b"))
+  defaultShortColor = fmt.Sprintf("%s", ansi.ColorCode("default"))
+
   emphBlueColor = fmt.Sprintf(ansi.ColorCode("blue+b"))
-  highlightColor = fmt.Sprintf(ansi.ColorCode("red+b"))
+  emphRedColor = fmt.Sprintf(ansi.ColorCode("red+b"))
+  emphColor = emphBlueColor
+
+  titleColor = fmt.Sprintf(ansi.ColorCode("default+b"))
+  titleEmph = emphBlueColor
+  infoColor = emphBlueColor
+  successColor = fmt.Sprintf(ansi.ColorCode("green+b"))
+  warnColor = fmt.Sprintf(ansi.ColorCode("yellow+b"))
+  failColor = emphRedColor
   resetColor = fmt.Sprintf(ansi.ColorCode("reset"))
+
 )
 
 func init() {
@@ -88,13 +110,19 @@ func init() {
   exit = app.Command("exit", "exit the program. <ctrl-D> works too.")
   quit = app.Command("quit", "exit the program.")
 
+  // Cluster Commands
+  clusterCmd = app.Command("cluster", "Context for cluster commands.")
+  clusterListCmd = clusterCmd.Command("list", "List short status of all the clusters.")
+  clusterStatusCmd  = clusterCmd.Command("status", "Detailed status on the cluster.")
+  clusterStatusCmd.Arg("cluster", "The cluster you want to describe.").Action(setCurrent).StringVar(&clusterArg)
+
   // Server commands
   serverCmd = app.Command("server","Context for minecraft server commands.")
 
   serverLaunchCmd = serverCmd.Command("launch", "Launch a new minecraft server for a user in a cluster.")
   serverLaunchCmd.Arg("user", "User name of the server").Required().StringVar(&userNameArg)
   serverLaunchCmd.Arg("server-name","Name of the server. This is an identifier for the serve. (e.g. test-server, world-play).").Required().StringVar(&serverNameArg)
-  serverLaunchCmd.Arg("cluster", "ECS cluster to launch the server in.").Default("minecraft").StringVar(&clusterNameArg)
+  serverLaunchCmd.Arg("cluster", "ECS cluster to launch the server in.").Action(setCurrent).StringVar(&clusterArg)
   serverLaunchCmd.Arg("ecs-task", "ECS Task that represents a running minecraft server.").Default("minecraft-ecs").StringVar(&serverTaskArg)
   serverLaunchCmd.Arg("ecs-conatiner-name", "Container name for the minecraft server (used for environment variables.").Default("minecraft").StringVar(&serverContainerNameArg)
 
@@ -103,7 +131,7 @@ func init() {
   serverStartCmd.Arg("user","User name for the server.").Required().StringVar(&userNameArg)
   serverStartCmd.Arg("server-name","Name of the server. This is an identifier for the serve. (e.g. test-server, world-play).").Required().StringVar(&serverNameArg)
   serverStartCmd.Arg("snapshot", "Name of snapshot for starting server.").Required().StringVar(&snapshotNameArg)
-  serverStartCmd.Arg("cluster", "ECS Cluster for the server containers.").Default("minecraft").StringVar(&clusterNameArg)
+  serverStartCmd.Arg("cluster", "ECS Cluster for the server containers.").Action(setCurrent).StringVar(&clusterArg)
   serverStartCmd.Arg("ecs-task", "ECS Task that represents a running minecraft server.").Default("minecraft-ecs").StringVar(&serverTaskArg)
   serverStartCmd.Arg("ecs-conatiner-name", "Container name for the minecraft server (used for environment variables.").Default("minecraft").StringVar(&serverContainerNameArg)
 
@@ -111,13 +139,13 @@ func init() {
   serverTerminateCmd.Arg("ecs-task-arn", "ECS Task ARN for this server.").Required().StringVar(&serverTaskArnArg)
 
   serverListCmd = serverCmd.Command("list", "List the servers for a cluster.")
-  serverListCmd.Arg("cluster", "ECS cluster to look for servers.").Default("minecraft").StringVar(&clusterNameArg)
+  serverListCmd.Arg("cluster", "ECS cluster to look for servers.").Action(setCurrent).StringVar(&clusterArg)
 
   serverDescribeAllCmd = serverCmd.Command("describe-all", "Show details for all servers in cluster.")
-  serverDescribeAllCmd.Arg("cluster", "The ECS cluster where the servers live.").Default("minecraft").StringVar(&clusterNameArg)
+  serverDescribeAllCmd.Arg("cluster", "The ECS cluster where the servers live.").Action(setCurrent).StringVar(&clusterArg)
   serverDescribeCmd = serverCmd.Command("describe", "Show some details for a users server.")
   serverDescribeCmd.Arg("user", "The user that owns the server.").Required().StringVar(&userNameArg)
-  serverDescribeCmd.Arg("cluster", "The ECS cluster where the server lives.").Default("minecraft").StringVar(&clusterNameArg)
+  serverDescribeCmd.Arg("cluster", "The ECS cluster where the server lives.").Action(setCurrent).StringVar(&clusterArg)
 
   // Snapshot commands
   snapshotCmd = app.Command("snapshot", "Context for snapshot commands.")
@@ -167,6 +195,24 @@ func DoICommand(line string, sess *session.Session, ecsSvc *ecs.ECS, ec2Svc *ec2
   return err
 }
 
+func setCurrent(pc *kingpin.ParseContext) (error) {
+
+  for _, pe := range pc.Elements {
+    c := pe.Clause
+    switch c.(type) {
+    // case *kingpin.CmdClause : fmt.Printf("CmdClause: %s\n", (c.(*kingpin.CmdClause)).Model().Name)
+    // case *kingpin.FlagClause : fmt.Printf("ArgClause: %s\n", c.(*kingpin.FlagClause).Model().Name)
+    case *kingpin.ArgClause : 
+      fc := c.(*kingpin.ArgClause)
+      if fc.Model().Name == "cluster" {
+        currentCluster = *pe.Value
+      }
+    }
+  }
+
+  return nil
+}
+
 func doVerbose() (error) {
   if toggleVerbose() {
     fmt.Println("Verbose is on.")
@@ -208,7 +254,7 @@ func doQuit(sess *session.Session) (error) {
     for _, c := range clusters {
       instanceCount := *c.RegisteredContainerInstancesCount
       color := nullColor
-      if instanceCount > 0 {color = highlightColor}
+      if instanceCount > 0 {color = infoColor}
       fmt.Fprintf(w, "%s%s\t%s\t%d\t%d\t%d%s\n", color, *c.ClusterName, *c.Status, 
         instanceCount, *c.PendingTasksCount, *c.RunningTasksCount, resetColor)
     }      
@@ -220,8 +266,9 @@ func doQuit(sess *session.Session) (error) {
 
 func doTerminate(i int) {}
 
-func promptLoop(prompt string, process func(string) (error)) (err error) {
+func promptLoop(process func(string) (error)) (err error) {
   errStr := "Error - %s.\n"
+  prompt := fmt.Sprintf("%s[%s%s%s]:%s ", titleEmph, infoColor, currentCluster, titleEmph, resetColor)
   for moreCommands := true; moreCommands; {
     line, err := readline.String(prompt)
     if err == io.EOF {
@@ -254,8 +301,7 @@ func DoInteractive(config *aws.Config) {
   ec2Svc := ec2.New(session)
   s3Svc := s3.New(session)
   xICommand := func(line string) (err error) {return DoICommand(line, session, ecsSvc, ec2Svc, s3Svc)}
-  prompt := "> "
-  err := promptLoop(prompt, xICommand)
+  err := promptLoop(xICommand)
   if err != nil {fmt.Printf("Error - %s.\n", err)}
 }
 
