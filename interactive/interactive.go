@@ -5,9 +5,6 @@ import (
   "strings"
   "fmt"
   "io"
-  "os"
-  "text/tabwriter"
-  "time"
   "github.com/aws/aws-sdk-go/aws"
   "github.com/aws/aws-sdk-go/aws/session"
   "github.com/aws/aws-sdk-go/service/ecs"
@@ -20,7 +17,7 @@ import (
 
   // Careful now ...
   // "awslib"
-  "github.com/jdrivas/awslib"
+  // "github.com/jdrivas/awslib"
 
 )
 
@@ -47,6 +44,9 @@ var (
   clusterListCmd *kingpin.CmdClause
   clusterStatusCmd *kingpin.CmdClause
 
+  proxyCmd *kingpin.CmdClause
+  proxyLaunchCmd *kingpin.CmdClause
+
   serverCmd *kingpin.CmdClause
   serverLaunchCmd *kingpin.CmdClause
   serverStartCmd *kingpin.CmdClause
@@ -59,8 +59,11 @@ var (
   clusterArg string
   serverTaskArg string
 
+  proxyNameArg string
+  proxyTaskDefArg string
+
   // TODO: remove this. We don't use it anymore.
-  serverContainerNameArg string
+  // serverContainerNameArg string
   serverTaskArnArg string
   bucketNameArg string
 
@@ -110,11 +113,20 @@ func init() {
   exit = app.Command("exit", "exit the program. <ctrl-D> works too.")
   quit = app.Command("quit", "exit the program.")
 
+
   // Cluster Commands
   clusterCmd = app.Command("cluster", "Context for cluster commands.")
   clusterListCmd = clusterCmd.Command("list", "List short status of all the clusters.")
   clusterStatusCmd  = clusterCmd.Command("status", "Detailed status on the cluster.")
   clusterStatusCmd.Arg("cluster", "The cluster you want to describe.").Action(setCurrent).StringVar(&clusterArg)
+
+
+  // Proxy commands
+  proxyCmd = app.Command("proxy", "Context for the proxy commands.")
+  proxyLaunchCmd = proxyCmd.Command("launch", "Launch a proxy into the cluster")
+  proxyLaunchCmd.Arg("proxy-name", "Name for the launched proxy.").Required().StringVar(&proxyNameArg)
+  proxyLaunchCmd.Arg("cluster", "ECS Cluster for the lauched proxy.").Action(setCurrent).StringVar(&clusterArg)
+  proxyLaunchCmd.Arg("ecs-task","ECS Task definig containers etc, to used in launching the proxy.").Default("bungee-ecs").StringVar(&proxyTaskDefArg)
 
   // Server commands
   serverCmd = app.Command("server","Context for minecraft server commands.")
@@ -124,7 +136,7 @@ func init() {
   serverLaunchCmd.Arg("server-name","Name of the server. This is an identifier for the serve. (e.g. test-server, world-play).").Required().StringVar(&serverNameArg)
   serverLaunchCmd.Arg("cluster", "ECS cluster to launch the server in.").Action(setCurrent).StringVar(&clusterArg)
   serverLaunchCmd.Arg("ecs-task", "ECS Task that represents a running minecraft server.").Default("minecraft-ecs").StringVar(&serverTaskArg)
-  serverLaunchCmd.Arg("ecs-conatiner-name", "Container name for the minecraft server (used for environment variables.").Default("minecraft").StringVar(&serverContainerNameArg)
+  // serverLaunchCmd.Arg("ecs-conatiner-name", "Container name for the minecraft server (used for environment variables.").Default("minecraft").StringVar(&serverContainerNameArg)
 
   serverStartCmd = serverCmd.Command("start", "Start a server from a snapshot.")
   serverStartCmd.Flag("useFullURI", "Use a full URI for the snapshot as opposed to a named snapshot.").Default("false").BoolVar(&useFullURIFlag)
@@ -133,7 +145,7 @@ func init() {
   serverStartCmd.Arg("snapshot", "Name of snapshot for starting server.").Required().StringVar(&snapshotNameArg)
   serverStartCmd.Arg("cluster", "ECS Cluster for the server containers.").Action(setCurrent).StringVar(&clusterArg)
   serverStartCmd.Arg("ecs-task", "ECS Task that represents a running minecraft server.").Default("minecraft-ecs").StringVar(&serverTaskArg)
-  serverStartCmd.Arg("ecs-conatiner-name", "Container name for the minecraft server (used for environment variables.").Default("minecraft").StringVar(&serverContainerNameArg)
+  // serverStartCmd.Arg("ecs-conatiner-name", "Container name for the minecraft server (used for environment variables.").Default("minecraft").StringVar(&serverContainerNameArg)
 
   serverTerminateCmd = serverCmd.Command("terminate", "Stop this server")
   serverTerminateCmd.Arg("ecs-task-arn", "ECS Task ARN for this server.").Required().StringVar(&serverTaskArnArg)
@@ -179,6 +191,12 @@ func DoICommand(line string, sess *session.Session, ecsSvc *ecs.ECS, ec2Svc *ec2
       case verboseCmd.FullCommand(): err = doVerbose()
       case exit.FullCommand(): err = doQuit(sess)
       case quit.FullCommand(): err = doQuit(sess)
+
+      case proxyLaunchCmd.FullCommand(): err = doLaunchProxy(sess)
+
+      // Cluster Commands
+      case clusterListCmd.FullCommand(): err = doListClusters(sess)
+      case clusterStatusCmd.FullCommand(): err = doClusterStatus(sess)
 
       // Server Commands
       case serverLaunchCmd.FullCommand(): err = doLaunchServerCmd(sess)
@@ -242,25 +260,10 @@ func toggleDebug() bool {
 }
 
 func doQuit(sess *session.Session) (error) {
-
-  clusters, err := awslib.GetAllClusterDescriptions(sess)
-  clusters.Sort(awslib.ByReverseActivity)
+  err := doListClusters(sess)
   if err != nil {
-    fmt.Printf("doQuit: Error getting cluster data: %s\n", err)
-  } else {
-    fmt.Println(time.Now().Local().Format(time.RFC1123))
-    w := tabwriter.NewWriter(os.Stdout, 4, 10, 2, ' ', 0)
-    fmt.Fprintf(w, "%sName\tStatus\tInstances\tPending\tRunning%s\n", emphColor, resetColor)
-    for _, c := range clusters {
-      instanceCount := *c.RegisteredContainerInstancesCount
-      color := nullColor
-      if instanceCount > 0 {color = infoColor}
-      fmt.Fprintf(w, "%s%s\t%s\t%d\t%d\t%d%s\n", color, *c.ClusterName, *c.Status, 
-        instanceCount, *c.PendingTasksCount, *c.RunningTasksCount, resetColor)
-    }      
-    w.Flush()
+    fmt.Printf("%sError: %s%s", failColor, err, resetColor)
   }
-
   return io.EOF
 }
 
@@ -268,8 +271,8 @@ func doTerminate(i int) {}
 
 func promptLoop(process func(string) (error)) (err error) {
   errStr := "Error - %s.\n"
-  prompt := fmt.Sprintf("%s[%s%s%s]:%s ", titleEmph, infoColor, currentCluster, titleEmph, resetColor)
   for moreCommands := true; moreCommands; {
+    prompt := fmt.Sprintf("%scraft [%s%s%s]:%s ", titleEmph, infoColor, currentCluster, titleEmph, resetColor)
     line, err := readline.String(prompt)
     if err == io.EOF {
       moreCommands = false

@@ -40,12 +40,15 @@ const (
   DefaultArchiveRegion = "us-east-1"
   DefaultArchiveBucket = "craft-config-test"
 )
-func doLaunchServerCmd(sess *session.Session) (error) {
-  env := getTaskEnvironment(userNameArg, serverNameArg, DefaultArchiveRegion, bucketNameArg)
 
+
+func doLaunchServerCmd(sess *session.Session) (error) {
+
+  env := getTaskEnvironment(userNameArg, serverNameArg, DefaultArchiveRegion, DefaultArchiveBucket)
   serverEnv := env[mclib.MinecraftServerContainerName]
   contEnv := env[mclib.MinecraftControllerContainerName]
-  fmt.Println("Launching minecraft server:")
+
+  fmt.Println("%sLaunching new minecraft server:%s\n", successColor, resetColor)
   w := tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
   fmt.Fprintf(w, "%sCluster\tUser\tName\tTask\tRegion\tBucket%s\n", titleColor, resetColor)
   fmt.Fprintf(w, "%s%s\t%s\t%s\t%s\t%s\t%s%s\n", nullColor,
@@ -59,14 +62,14 @@ func doLaunchServerCmd(sess *session.Session) (error) {
 
 func doStartServerCmd(sess *session.Session) (err error) {
 
-  env := getTaskEnvironment(userNameArg, serverNameArg, DefaultArchiveRegion, bucketNameArg)
+  env := getTaskEnvironment(userNameArg, serverNameArg, DefaultArchiveRegion, DefaultArchiveBucket)
   controllerEnv := env[mclib.MinecraftControllerContainerName]
-  serverEnv := env[serverContainerNameArg]
+  serverEnv := env[mclib.MinecraftServerContainerName]
   if useFullURIFlag {
     // TODO:
-    serverEnv["WORLD"] = snapshotNameArg
+    serverEnv[mclib.WorldKey] = snapshotNameArg
   } else {
-    serverEnv["WORLD"] = mclib.SnapshotURI(bucketNameArg, userNameArg, serverNameArg, snapshotNameArg)
+    serverEnv[mclib.WorldKey] = mclib.SnapshotURI(DefaultArchiveBucket, userNameArg, serverNameArg, snapshotNameArg)
   }
 
   fmt.Println("Startig minecraft server:")
@@ -83,6 +86,12 @@ func doStartServerCmd(sess *session.Session) (err error) {
 }
 
 // TODO: DONT launch a server if there is already one with the same user and server names.
+// TODO: We need to be able to attach a server, on launch, to a running proxy.
+// I expect that what we'll do is add an ENV variable to the controller (and might
+// as well add it to the server too), pointing somehow to the proxy. Perhaps simply 
+// Server/RconPort is enough.
+// The controller can then be configured to add the server to the proxy on connection.
+// Let's consider a ROLE env variable. 
 func launchServer(taskDefinition, clusterName, userName string, env awslib.ContainerEnvironmentMap, sess *session.Session) (err error) {
 
   serverEnv := env[mclib.MinecraftServerContainerName]
@@ -91,11 +100,10 @@ func launchServer(taskDefinition, clusterName, userName string, env awslib.Conta
     controlEnv[mclib.ArchiveBucketKey] = DefaultArchiveBucket
   }
   if verbose  || debug {
-    fmt.Printf("Making container with environment: %#v\n", env)
+    fmt.Printf("Making server with container environments: %#v\n", env)
   }
 
-  ecsSvc := ecs.New(sess)  // TODO: push the session to RunTaskWithEnv ?
-  resp, err := awslib.RunTaskWithEnv(clusterName, taskDefinition, env, ecsSvc)
+  resp, err := awslib.RunTaskWithEnv(clusterName, taskDefinition, env, sess)
   startTime := time.Now()
   tasks := resp.Tasks
   failures := resp.Failures
@@ -105,7 +113,7 @@ func launchServer(taskDefinition, clusterName, userName string, env awslib.Conta
     fmt.Printf("%s launched %s for %s\n", startTime.Local().Format(time.RFC1123), serverName, newUser)
     if len(tasks) == 1  {
       waitForTaskArn := *tasks[0].TaskArn
-      awslib.OnTaskRunning(clusterName, waitForTaskArn, ecsSvc, func(taskDescrip *ecs.DescribeTasksOutput, err error) {
+      awslib.OnTaskRunning(clusterName, waitForTaskArn, sess, func(taskDescrip *ecs.DescribeTasksOutput, err error) {
         if err == nil {
           s, err  := mclib.GetServer(clusterName, waitForTaskArn, sess)
           if err == nil {
@@ -120,23 +128,13 @@ func launchServer(taskDefinition, clusterName, userName string, env awslib.Conta
             failColor, err, resetColor)
         }
       })
-    } else {
-
-      if len(tasks) > 0 {
-        fmt.Printf("%sGot something other than 1 task back. Will not upate on further progress.%s\n", warnColor, resetColor)
-        for i, t := range tasks {
-          fmt.Printf("%d:  %#v", i+1, t)
-        }
-      }
+    } else if len(tasks) > 1 {
+      fmt.Printf("%sGot more tasks in response to the launch than expected.%s\n", warnColor, resetColor)
+      printTaskList(tasks)
+      fmt.Printf("%sNo more updates forthcomming.%s\n", warnColor, resetColor)
     }
-    if len(failures) > 1 {
-      fmt.Printf("%sGot (%d) failures.%s\n", failColor, len(failures), resetColor)
-      w := tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
-      fmt.Fprintf(w, "Failure\tArn\n")
-      for _, failure := range failures {
-        fmt.Fprintf(w, "%s\t%s\n",  *failure.Reason, *failure.Arn)
-      }
-      w.Flush()
+    if len(failures) > 0 {
+      printECSFailures(failures)
     }
   }
   return err
@@ -192,6 +190,7 @@ func doTerminateServerCmd(sess *session.Session) (error) {
 func getTaskEnvironment(userName, serverName, region, bucketName string) awslib.ContainerEnvironmentMap {
   cenv := make(awslib.ContainerEnvironmentMap)
   cenv[mclib.MinecraftServerContainerName] = map[string]string {
+    mclib.RoleKey: mclib.CraftServerRole,
     mclib.ServerUserKey: userName,
     mclib.ServerNameKey: serverName,
     mclib.OpsKey: userName,
@@ -206,9 +205,9 @@ func getTaskEnvironment(userName, serverName, region, bucketName string) awslib.
     mclib.AllowNetherKey: mclib.AllowNetherDefault,
     mclib.MaxPlayersKey: mclib.MaxPlayersDefault,
     mclib.QueryKey: mclib.QueryDefault,
-    mclib.QueryPortKey: mclib.QueryPortDefault,
+    mclib.QueryPortKey: mclib.QueryPortDefaultString,
     mclib.EnableRconKey: mclib.EnableRconDefault,
-    mclib.RconPortKey: mclib.RconPortDefault,
+    mclib.RconPortKey: mclib.RconPortDefaultString,
     mclib.RconPasswordKey: mclib.RconPasswordDefault, // TODO NO NO NO NO NO NO NO NO NO NO NO NO NO
     mclib.MOTDKey: fmt.Sprintf("A neighborhood kept by %s.", userName),
     mclib.PVPKey: mclib.PVPDefault,
@@ -221,7 +220,12 @@ func getTaskEnvironment(userName, serverName, region, bucketName string) awslib.
   // to the minecraft-controller. The AWS-SDK looks for this
   // env when setting up a session (this also plays well with
   // using IAM Roles for credentials).
+  // TODO: Consider moving each of these envs into their own
+  // separate basic defaults, which can be leveraged into
+  // the separate proxy and barse verions.
+  // DRY
   cenv[mclib.MinecraftControllerContainerName] = map[string]string{
+    mclib.RoleKey: mclib.CraftControllerRole,
     mclib.ServerUserKey: userName,
     mclib.ServerNameKey: serverName,
     mclib.ArchiveRegionKey: region,
@@ -292,6 +296,11 @@ func failureShortString(failure *ecs.Failure) (s string){
   return s
 }
 
+// TODO: This currently assumes that all tasks on a cluster are
+// server tasks. This is an invalid assumption - though we may find that
+// we'll run proxies in a separate cluster. TBD for sure. Regardless of how
+// this finally turns out, we need to make server discoery in a cluster
+// more robust. See the assana note for more on this: https://app.asana.com/0/150993196087302/177572123631468
 
 func doListServersCmd(sess *session.Session) (err error) { 
   dtm, err := awslib.GetDeepTasks(currentCluster, sess)
@@ -315,10 +324,10 @@ func doListServersCmd(sess *session.Session) (err error) {
       var uptime time.Duration
       if uptime, err = dt.Uptime(); err != nil { uptime = 0 * time.Millisecond}  // fail silently.
       sC := getContainer(cntrs, mclib.MinecraftServerContainerName)
-      sCS := "NO-SERVER"
+      sCS := "<no-server>"
       if sC != nil { sCS = fmt.Sprintf("%s", *sC.LastStatus) }
       bC := getContainer(t.Containers, mclib.MinecraftControllerContainerName)
-      bCS := "NO-CONTROLLER"
+      bCS := "<no-controller>"
       if bC != nil { bCS = fmt.Sprintf("%s", *bC.LastStatus) }
       tArn := awslib.ShortArnString(t.TaskArn)
       cOM := makeContainerOverrideMap(t.Overrides)
@@ -373,7 +382,7 @@ func getMinecraftPort(containers []*ecs.Container) (s string) {
   }
   
   if server == nil {
-    s = "NO MINECRAFT CONTAINER"
+    s = "<none>"
   } else {
     var serverHostPort  *int64
     for _, binding := range server.NetworkBindings {
@@ -382,7 +391,7 @@ func getMinecraftPort(containers []*ecs.Container) (s string) {
       }
     }
     if serverHostPort == nil {
-      s = "PORT NOT ASSIGNED"
+      s = "<none>"
     } else {
       s = fmt.Sprintf("%d", *serverHostPort)
     }
@@ -483,7 +492,9 @@ func makeContainerOverrideMap(to *ecs.TaskOverride) (ContainerOverrideMap) {
 }
 
 func (c ContainerOverrideMap) getEnv(containerName, key string) (s string, ok bool) {
-  if co, ok := c[containerName]; ok {
+  var co *ecs.ContainerOverride
+  if co, ok = c[containerName]; ok {
+    ok = false
     env := co.Environment
     for _, kvp := range env {
       if *kvp.Name == key {
