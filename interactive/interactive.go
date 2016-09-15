@@ -46,6 +46,7 @@ var (
 
   proxyCmd *kingpin.CmdClause
   proxyLaunchCmd *kingpin.CmdClause
+  proxyListCmd *kingpin.CmdClause
 
   serverCmd *kingpin.CmdClause
   serverLaunchCmd *kingpin.CmdClause
@@ -127,6 +128,9 @@ func init() {
   proxyLaunchCmd.Arg("proxy-name", "Name for the launched proxy.").Required().StringVar(&proxyNameArg)
   proxyLaunchCmd.Arg("cluster", "ECS Cluster for the lauched proxy.").Action(setCurrent).StringVar(&clusterArg)
   proxyLaunchCmd.Arg("ecs-task","ECS Task definig containers etc, to used in launching the proxy.").Default("bungee-ecs").StringVar(&proxyTaskDefArg)
+  proxyListCmd = proxyCmd.Command("list", "List all the proxies in a cluster.")
+  proxyListCmd.Arg("cluster", "The cluster where you'll find proxy tasks.").Action(setCurrent).StringVar(&clusterArg)
+
 
   // Server commands
   serverCmd = app.Command("server","Context for minecraft server commands.")
@@ -193,6 +197,7 @@ func DoICommand(line string, sess *session.Session, ecsSvc *ecs.ECS, ec2Svc *ec2
       case quit.FullCommand(): err = doQuit(sess)
 
       case proxyLaunchCmd.FullCommand(): err = doLaunchProxy(sess)
+      case proxyListCmd.FullCommand(): err = doListProxies(sess)
 
       // Cluster Commands
       case clusterListCmd.FullCommand(): err = doListClusters(sess)

@@ -15,6 +15,21 @@ import(
   "github.com/jdrivas/awslib"
 )
 
+func doListProxies(sess *session.Session) (error) {
+    proxies, dtm, err := mclib.GetProxies(currentCluster, sess)
+    w := tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
+    fmt.Fprintf(w, "%sName\tProxy Public Addr\tRcon Private Addr\tStatus\tUptime\tARN%s\n", titleColor, resetColor)
+    for _, p := range proxies {
+      dt := dtm[p.TaskArn]
+      fmt.Fprintf(w, "%s%s\t%s\t%s\t%s\t%s\t%s%s\n", nullColor,
+        p.Name, p.PublicIpAddress(), p.RconAddress(), dt.LastStatus(), dt.UptimeString(), 
+        awslib.ShortArnString(&p.TaskArn), resetColor)
+    }
+    w.Flush()
+   return err
+}
+
+// TODO: Much of this needs to move to mclib.
 func doLaunchProxy(sess *session.Session) (error) {
 
   // Get these from the UI for now.
