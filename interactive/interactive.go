@@ -27,9 +27,11 @@ const(
 
 var (
 
-  // State variables
+  // General State
   currentCluster = defaultCluster
+  log *logging.Logger
 
+  // UI State
   app *kingpin.Application
 
   exit *kingpin.CmdClause
@@ -56,19 +58,15 @@ var (
   serverDescribeAllCmd *kingpin.CmdClause
   serverDescribeCmd *kingpin.CmdClause
 
-  // AWS paramaters
   clusterArg string
   serverTaskArg string
 
   proxyNameArg string
   proxyTaskDefArg string
 
-  // TODO: remove this. We don't use it anymore.
-  // serverContainerNameArg string
   serverTaskArnArg string
   bucketNameArg string
 
-  // mclib Paramaters
   userNameArg string
   serverNameArg string
   snapshotNameArg string
@@ -76,9 +74,6 @@ var (
 
   snapshotCmd *kingpin.CmdClause
   snapshotListCmd *kingpin.CmdClause
-
-  log *logging.Logger
-
 )
 
 // Text Coloring
@@ -218,6 +213,11 @@ func DoICommand(line string, sess *session.Session, ecsSvc *ecs.ECS, ec2Svc *ec2
   return err
 }
 
+// setCurrent() is called via an Action command on a flag, arg or clause.
+// It's intended to catch variable setting that persists after the variable
+// has been set in the command. 
+// Currently we only use this for cluster setting and the change is
+// expressed in the prompt. see promptLoop below.
 func setCurrent(pc *kingpin.ParseContext) (error) {
 
   for _, pe := range pc.Elements {

@@ -17,13 +17,18 @@ import(
 
 func doListProxies(sess *session.Session) (error) {
     proxies, dtm, err := mclib.GetProxies(currentCluster, sess)
+    fmt.Printf("%s%s proxies on %s%s\n", titleColor, time.Now().Local().Format(time.RFC1123), resetColor)
     w := tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
     fmt.Fprintf(w, "%sName\tProxy Public Addr\tRcon Private Addr\tStatus\tUptime\tARN%s\n", titleColor, resetColor)
-    for _, p := range proxies {
-      dt := dtm[p.TaskArn]
-      fmt.Fprintf(w, "%s%s\t%s\t%s\t%s\t%s\t%s%s\n", nullColor,
-        p.Name, p.PublicIpAddress(), p.RconAddress(), dt.LastStatus(), dt.UptimeString(), 
-        awslib.ShortArnString(&p.TaskArn), resetColor)
+    if len(proxies) == 0 {
+      fmt.Fprintf(w,"%s\tNO PROXIES FOUND ON THIS CLUSTER\n%s", titleColor, resetColor)
+    } else {
+      for _, p := range proxies {
+        dt := dtm[p.TaskArn]
+        fmt.Fprintf(w, "%s%s\t%s\t%s\t%s\t%s\t%s%s\n", nullColor,
+          p.Name, p.PublicIpAddress(), p.RconAddress(), dt.LastStatus(), dt.UptimeString(), 
+          awslib.ShortArnString(&p.TaskArn), resetColor)
+      }
     }
     w.Flush()
    return err

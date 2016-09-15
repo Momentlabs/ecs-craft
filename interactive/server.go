@@ -1,19 +1,13 @@
 package interactive 
 
 import (
-  // "gopkg.in/alecthomas/kingpin.v2"
-  // "github.com/bobappleyard/readline"
-  // "strings"
   "fmt"
-  // "io"
   "os"
   "text/tabwriter"
   "time"
-  // "github.com/aws/aws-sdk-go/aws"
   "github.com/aws/aws-sdk-go/aws/session"
   "github.com/aws/aws-sdk-go/service/ecs"
   "github.com/aws/aws-sdk-go/service/ec2"
-  // "github.com/mgutz/ansi"
 
   //
   // Careful now ...
