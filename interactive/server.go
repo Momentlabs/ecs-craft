@@ -300,15 +300,13 @@ func doListServersCmd(sess *session.Session) (err error) {
   dtm, err := awslib.GetDeepTasks(currentCluster, sess)
   if err != nil {return err}
 
-  if len(dtm) == 0 {
-    fmt.Printf("%sThere are no servuers on cluster: %s.%s\n", emphBlueColor, currentCluster, resetColor)
-    return nil
-  }
-
-  //name uptime ip:port arn server-name STATUS backup-name STATUS
   w := tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
   fmt.Fprintf(w, "%sUser\tServer\tUptime\tAddress\tServer\tControl\tArn%s\n", titleColor, resetColor)
-  // for _, dt := range dtm {
+  if len(dtm) == 0 {
+    fmt.Fprintf(w,"%s\tNO SERVERS FOUND ON THIS CLUSTER%s\n", titleColor, resetColor)
+    w.Flush()
+    return nil
+  }
   for _, dt := range dtm.DeepTasks(awslib.ByReverseUptime) {
     t := dt.Task
     inst := dt.EC2Instance

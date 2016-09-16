@@ -49,6 +49,7 @@ var (
   proxyCmd *kingpin.CmdClause
   proxyLaunchCmd *kingpin.CmdClause
   proxyListCmd *kingpin.CmdClause
+  proxyAttachCmd *kingpin.CmdClause
 
   serverCmd *kingpin.CmdClause
   serverLaunchCmd *kingpin.CmdClause
@@ -125,6 +126,9 @@ func init() {
   proxyLaunchCmd.Arg("ecs-task","ECS Task definig containers etc, to used in launching the proxy.").Default("bungee-ecs").StringVar(&proxyTaskDefArg)
   proxyListCmd = proxyCmd.Command("list", "List all the proxies in a cluster.")
   proxyListCmd.Arg("cluster", "The cluster where you'll find proxy tasks.").Action(setCurrent).StringVar(&clusterArg)
+  proxyAttachCmd = proxyCmd.Command("attach", "Attach proxy to the network by hand.")
+  proxyAttachCmd.Arg("proxy-name", "Name of the proxy you want to attach to the network.").Required().StringVar(&proxyNameArg)
+  proxyAttachCmd.Arg("clsuter", "The cluster where you'll find the proxy.").Action(setCurrent).StringVar(&clusterArg)
 
 
   // Server commands
@@ -193,6 +197,7 @@ func DoICommand(line string, sess *session.Session, ecsSvc *ecs.ECS, ec2Svc *ec2
 
       case proxyLaunchCmd.FullCommand(): err = doLaunchProxy(sess)
       case proxyListCmd.FullCommand(): err = doListProxies(sess)
+      case proxyAttachCmd.FullCommand(): err = doAttachProxy(sess)
 
       // Cluster Commands
       case clusterListCmd.FullCommand(): err = doListClusters(sess)
@@ -275,7 +280,7 @@ func doQuit(sess *session.Session) (error) {
 func doTerminate(i int) {}
 
 func promptLoop(process func(string) (error)) (err error) {
-  errStr := "Error - %s.\n"
+  errStr := "Error: %s\n"
   for moreCommands := true; moreCommands; {
     prompt := fmt.Sprintf("%scraft [%s%s%s]:%s ", titleEmph, infoColor, currentCluster, titleEmph, resetColor)
     line, err := readline.String(prompt)
