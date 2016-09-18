@@ -64,6 +64,8 @@ func doLaunchProxy(sess *session.Session) (error) {
   // Get these from the UI for now.
   // TODO: want to do some form of config for this,
   // though this may stand so it can be overridden by the UI ......
+  // TODO: Also move to the patttern we've got for servers of ServerSpec to
+  // launch from the taskdefinition.
   proxyName := proxyNameArg
   bucketName := DefaultArchiveBucket
   proxyTaskDef := getProxyTaskDef()
@@ -101,16 +103,23 @@ func doLaunchProxy(sess *session.Session) (error) {
   return nil
 }
 
-// TODO: This could be made slightly more robust by returning
+// TODO: This could be made more robust by returning
 // an error and noting if there were conflicts on the command line:
 // e.g. We actively selected conflicting port-plan and a task-def.
 // Probalby not worth the trouble.
+// TODO: This is not the way to do this. We need to integrate in mclib
+// this kind of configuration. ...
+// However, this should implement the following behavior:
+// If we haven't specifically said what we're going to do with resepect to
+// Random or Default (25565) definnitions, we'll use whatever the mclib tell
+// us is the deffault.
 func getProxyTaskDef() (string) {
   switch proxyPortArg {
     case proxyDefaultPort: return mclib.BungeeProxyDefaultPortTaskDef
     case proxyRandomPort: return mclib.BungeeProxyRandomPortTaskDef
     case proxyUnselectedPort: return proxyTaskDefArg
   }
+  // should never get here.
   return proxyTaskDefArg
 }
 

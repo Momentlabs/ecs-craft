@@ -209,66 +209,6 @@ func doTerminateServerCmd(sess *session.Session) (error) {
   return nil
 }
 
-func tasksDescriptionShortString(tasks []*ecs.Task, failures []*ecs.Failure) (s string) {
-  switch {
-  case len(tasks) == 1:
-    task := tasks[0]
-    containers := tasks[0].Containers
-    switch {
-    case len(containers) == 1:
-      s += containerShortString(containers[0])
-    case len(containers) >= 0:
-      s += fmt.Sprintf("%s\n", awslib.ShortArnString(task.TaskDefinitionArn))
-      s += fmt.Sprintf("There are (%d) containers assocaited with this task.\n", len(containers))
-      for i, c := range containers {
-        s+= fmt.Sprintf("%d. %s\n", i+1, containerShortString(c))
-      }
-    }
-  case len(tasks) > 0:
-    s += fmt.Sprintf("There are (%d) tasks.\n", len(tasks))
-    for i, task := range tasks {
-      s += fmt.Sprintf("***** Task %d. %s", i+1, task)
-    }
-  case len(tasks) == 0:
-    s += fmt.Sprintf("No tasks.")
-  }
-  if len(failures) > 0 {
-    s += fmt.Sprintf("There are (%d) failures.\n", len(failures))
-    for i, failure := range failures {
-      s += fmt.Sprintf("\t%d. %s.\n", i+1, failureShortString(failure))
-    }
-  }
-
-  return s
-}
-
-func containerShortString(container *ecs.Container) (descrip string) {
-  descrip += fmt.Sprintf("%s", *container.Name)
-  bindings := container.NetworkBindings
-  switch {
-  case len(bindings) == 1:
-    descrip += fmt.Sprintf(" - %s", bindingShortString(bindings[0]))
-  case len(bindings) > 1:
-    descrip += fmt.Sprintf("\nPorts:\n.")
-    for i, bind := range container.NetworkBindings {
-      descrip += fmt.Sprintf("\t%d. %s\n", i+1, bindingShortString(bind))
-    }
-  case len(bindings) == 0:
-    descrip += fmt.Sprintf(" - no port bindings.")
-  }
-  return descrip
-}
-
-func bindingShortString(bind *ecs.NetworkBinding) (s string) {
-  s += fmt.Sprintf("%s container %d => host %d (%s)",*bind.BindIP, *bind.ContainerPort, *bind.HostPort, *bind.Protocol)
-  return s
-}
-
-func failureShortString(failure *ecs.Failure) (s string){
-  s += fmt.Sprintf("%s - %s", *failure.Arn, *failure.Reason)
-  return s
-}
-
 func doListServersCmd(sess *session.Session) (err error) { 
   servers, err := mclib.GetServers(currentCluster, sess)
   if err != nil {return err}
@@ -352,6 +292,16 @@ func longDeepTaskString(task *ecs.Task, ec2Inst *ec2.Instance) (s string) {
       fmt.Printf("Task: %s\n", *task.TaskArn)
       fmt.Printf("Task Definition: %s\n", *task.TaskDefinitionArn)
       return s
+}
+
+func bindingShortString(bind *ecs.NetworkBinding) (s string) {
+  s += fmt.Sprintf("%s container %d => host %d (%s)",*bind.BindIP, *bind.ContainerPort, *bind.HostPort, *bind.Protocol)
+  return s
+}
+
+func failureShortString(failure *ecs.Failure) (s string){
+  s += fmt.Sprintf("%s - %s", *failure.Arn, *failure.Reason)
+  return s
 }
 
 func networkBindingsString(bindings []*ecs.NetworkBinding) (s string) {
