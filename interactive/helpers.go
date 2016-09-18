@@ -11,12 +11,12 @@ import (
   "github.com/jdrivas/awslib"
 )
 
-func printECSFailures(failures []*ecs.Failure) {
-  fmt.Printf("%sGot (%d) failures.%s\n", failColor, len(failures), resetColor)
+func printECSFailures(cluster string, failures []*ecs.Failure) {
+  fmt.Printf("%sGot (%d) failures on %s%s\n", failColor, len(failures), cluster, resetColor)
   w := tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
-  fmt.Fprintf(w, "Failure\tArn\n")
+  fmt.Fprintf(w, "%sFailure\tArn%s\n", titleColor, resetColor)
   for _, failure := range failures {
-    fmt.Fprintf(w, "%s\t%s\n",  *failure.Reason, *failure.Arn)
+    fmt.Fprintf(w, "%s%s\t%s%s\n", failColor,  *failure.Reason, *failure.Arn, resetColor)
   }
   w.Flush()
 }

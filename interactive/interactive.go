@@ -16,6 +16,8 @@ import (
   "github.com/alecthomas/kingpin"
 
   // Careful now ...
+  // "mclib"
+  "github.com/jdrivas/mclib"
   // "awslib"
   // "github.com/jdrivas/awslib"
 
@@ -23,7 +25,16 @@ import (
 
 const(
   defaultCluster = "minecraft"
+  defaultServerTaskDef = mclib.DefaultServerTaskDefinition
+  defaultProxyTaskDef = mclib.DefaultProxyTaskDefinition
 )
+
+const(
+  proxyUnselectedPort = "unselected-port"
+  proxyDefaultPort = "default-port"
+  proxyRandomPort = "random-port"
+)
+
 
 var (
 
@@ -59,11 +70,15 @@ var (
   serverDescribeAllCmd *kingpin.CmdClause
   serverDescribeCmd *kingpin.CmdClause
 
+  envCmd *kingpin.CmdClause
+  envListCmd *kingpin.CmdClause
+
   clusterArg string
   serverTaskArg string
 
   proxyNameArg string
   proxyTaskDefArg string
+  proxyPortArg string
 
   serverTaskArnArg string
   bucketNameArg string
@@ -118,14 +133,24 @@ func init() {
   clusterStatusCmd.Arg("cluster", "The cluster you want to describe.").Action(setCurrent).StringVar(&clusterArg)
 
 
+  // Env Commands
+  envCmd = app.Command("env", "Context for environment commands")
+  envListCmd = envCmd.Command("list", "Print out an environment.")
+  envListCmd.Arg("server-name", "List this proxy or server environment.").Required().StringVar(&serverNameArg)
+  envListCmd.Arg("cluster", "The cluster where you'll find server.").Action(setCurrent).StringVar(&clusterArg)
+
   // Proxy commands
   proxyCmd = app.Command("proxy", "Context for the proxy commands.")
+
+  proxyListCmd = proxyCmd.Command("list", "List all the proxies in a cluster.")
+  proxyListCmd.Arg("cluster", "The cluster where you'll find proxy tasks.").Action(setCurrent).StringVar(&clusterArg)
+
   proxyLaunchCmd = proxyCmd.Command("launch", "Launch a proxy into the cluster")
   proxyLaunchCmd.Arg("proxy-name", "Name for the launched proxy.").Required().StringVar(&proxyNameArg)
   proxyLaunchCmd.Arg("cluster", "ECS Cluster for the lauched proxy.").Action(setCurrent).StringVar(&clusterArg)
-  proxyLaunchCmd.Arg("ecs-task","ECS Task definig containers etc, to used in launching the proxy.").Default("bungee-ecs").StringVar(&proxyTaskDefArg)
-  proxyListCmd = proxyCmd.Command("list", "List all the proxies in a cluster.")
-  proxyListCmd.Arg("cluster", "The cluster where you'll find proxy tasks.").Action(setCurrent).StringVar(&clusterArg)
+  proxyLaunchCmd.Arg("ecs-task","ECS Task definig containers etc, to used in launching the proxy.").Default(defaultProxyTaskDef).StringVar(&proxyTaskDefArg)
+  proxyLaunchCmd.Flag("port", "Choose either the default mclib default port (25565) or a random port selected at container launch.").Default(proxyUnselectedPort).EnumVar(&proxyPortArg, proxyUnselectedPort, proxyDefaultPort, proxyRandomPort)
+
   proxyAttachCmd = proxyCmd.Command("attach", "Attach proxy to the network by hand.")
   proxyAttachCmd.Arg("proxy-name", "Name of the proxy you want to attach to the network.").Required().StringVar(&proxyNameArg)
   proxyAttachCmd.Arg("clsuter", "The cluster where you'll find the proxy.").Action(setCurrent).StringVar(&clusterArg)
@@ -138,7 +163,7 @@ func init() {
   serverLaunchCmd.Arg("user", "User name of the server").Required().StringVar(&userNameArg)
   serverLaunchCmd.Arg("server-name","Name of the server. This is an identifier for the serve. (e.g. test-server, world-play).").Required().StringVar(&serverNameArg)
   serverLaunchCmd.Arg("cluster", "ECS cluster to launch the server in.").Action(setCurrent).StringVar(&clusterArg)
-  serverLaunchCmd.Arg("ecs-task", "ECS Task that represents a running minecraft server.").Default("minecraft-ecs").StringVar(&serverTaskArg)
+  serverLaunchCmd.Arg("ecs-task", "ECS Task that represents a running minecraft server.").Default(defaultServerTaskDef).StringVar(&serverTaskArg)
   // serverLaunchCmd.Arg("ecs-conatiner-name", "Container name for the minecraft server (used for environment variables.").Default("minecraft").StringVar(&serverContainerNameArg)
 
   serverStartCmd = serverCmd.Command("start", "Start a server from a snapshot.")
@@ -147,7 +172,7 @@ func init() {
   serverStartCmd.Arg("server-name","Name of the server. This is an identifier for the serve. (e.g. test-server, world-play).").Required().StringVar(&serverNameArg)
   serverStartCmd.Arg("snapshot", "Name of snapshot for starting server.").Required().StringVar(&snapshotNameArg)
   serverStartCmd.Arg("cluster", "ECS Cluster for the server containers.").Action(setCurrent).StringVar(&clusterArg)
-  serverStartCmd.Arg("ecs-task", "ECS Task that represents a running minecraft server.").Default("minecraft-ecs").StringVar(&serverTaskArg)
+  serverStartCmd.Arg("ecs-task", "ECS Task that represents a running minecraft server.").Default(defaultServerTaskDef).StringVar(&serverTaskArg)
   // serverStartCmd.Arg("ecs-conatiner-name", "Container name for the minecraft server (used for environment variables.").Default("minecraft").StringVar(&serverContainerNameArg)
 
   serverTerminateCmd = serverCmd.Command("terminate", "Stop this server")
@@ -194,6 +219,8 @@ func DoICommand(line string, sess *session.Session, ecsSvc *ecs.ECS, ec2Svc *ec2
       case verboseCmd.FullCommand(): err = doVerbose()
       case exit.FullCommand(): err = doQuit(sess)
       case quit.FullCommand(): err = doQuit(sess)
+
+      case envListCmd.FullCommand(): err = doListEnv(sess)
 
       case proxyLaunchCmd.FullCommand(): err = doLaunchProxy(sess)
       case proxyListCmd.FullCommand(): err = doListProxies(sess)
