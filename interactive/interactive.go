@@ -10,16 +10,19 @@ import (
   "github.com/aws/aws-sdk-go/service/ecs"
   "github.com/aws/aws-sdk-go/service/ec2"
   "github.com/aws/aws-sdk-go/service/s3"
+  "github.com/jdrivas/sl"
   "github.com/mgutz/ansi"
-  "github.com/op/go-logging"
+  // "github.com/op/go-logging"
   // "gopkg.in/alecthomas/kingpin.v2"
   "github.com/alecthomas/kingpin"
+  "github.com/Sirupsen/logrus"
+
 
   // Careful now ...
   // "mclib"
   "github.com/jdrivas/mclib"
   // "awslib"
-  // "github.com/jdrivas/awslib"
+  "github.com/jdrivas/awslib"
 
 )
 
@@ -40,7 +43,7 @@ var (
 
   // General State
   currentCluster = defaultCluster
-  log *logging.Logger
+  log = sl.New()
 
   // UI State
   app *kingpin.Application
@@ -56,6 +59,7 @@ var (
   clusterCmd *kingpin.CmdClause
   clusterListCmd *kingpin.CmdClause
   clusterStatusCmd *kingpin.CmdClause
+  clusterUseCmd *kingpin.CmdClause
 
   proxyCmd *kingpin.CmdClause
   proxyLaunchCmd *kingpin.CmdClause
@@ -69,6 +73,7 @@ var (
   serverListCmd *kingpin.CmdClause
   serverDescribeAllCmd *kingpin.CmdClause
   serverDescribeCmd *kingpin.CmdClause
+  serverProxyCmd *kingpin.CmdClause
 
   envCmd *kingpin.CmdClause
   envListCmd *kingpin.CmdClause
@@ -88,8 +93,8 @@ var (
   snapshotNameArg string
   useFullURIFlag bool
 
-  snapshotCmd *kingpin.CmdClause
-  snapshotListCmd *kingpin.CmdClause
+  archiveCmd *kingpin.CmdClause
+  archiveListCmd *kingpin.CmdClause
 )
 
 // Text Coloring
@@ -113,7 +118,6 @@ var (
 )
 
 func init() {
-  log = logging.MustGetLogger("ecs-craft")
 
   // TODO: all of these don't have to be global. 
   // Better practice to move these into a build UI routine(s).
@@ -131,6 +135,8 @@ func init() {
   clusterListCmd = clusterCmd.Command("list", "List short status of all the clusters.")
   clusterStatusCmd  = clusterCmd.Command("status", "Detailed status on the cluster.")
   clusterStatusCmd.Arg("cluster", "The cluster you want to describe.").Action(setCurrent).StringVar(&clusterArg)
+  clusterUseCmd = clusterCmd.Command("use", "Set the default cluster for the other commands.")
+  clusterUseCmd.Arg("cluster", "Set the default cluster for the other commands.").Action(setCurrent).StringVar(&clusterArg)
 
 
   // Env Commands
@@ -154,7 +160,6 @@ func init() {
   proxyAttachCmd = proxyCmd.Command("attach", "Attach proxy to the network by hand.")
   proxyAttachCmd.Arg("proxy-name", "Name of the proxy you want to attach to the network.").Required().StringVar(&proxyNameArg)
   proxyAttachCmd.Arg("clsuter", "The cluster where you'll find the proxy.").Action(setCurrent).StringVar(&clusterArg)
-
 
   // Server commands
   serverCmd = app.Command("server","Context for minecraft server commands.")
@@ -187,12 +192,18 @@ func init() {
   serverDescribeCmd.Arg("user", "The user that owns the server.").Required().StringVar(&userNameArg)
   serverDescribeCmd.Arg("cluster", "The ECS cluster where the server lives.").Action(setCurrent).StringVar(&clusterArg)
 
-  // Snapshot commands
-  snapshotCmd = app.Command("snapshot", "Context for snapshot commands.")
-  snapshotListCmd = snapshotCmd.Command("list", "List all snapshot for a user.")
-  snapshotListCmd.Arg("user", "The snapshot's user.").Required().StringVar(&userNameArg)
-  snapshotListCmd.Arg("bucket", "The name of the S3 bucket we're using to store snapshots in.").Default("craft-config-test").StringVar(&bucketNameArg)
+  serverProxyCmd = serverCmd.Command("proxy", "This puts a server under a proxy. Making it avaible to proxy members, and using the proxy as a DNS proxy for the server.")
+  serverProxyCmd.Arg("server", "Name of server to attach to proxy.").Required().StringVar(&serverNameArg)
+  serverProxyCmd.Arg("proxy", "The name of the proxy.").Required().StringVar(&proxyNameArg)
+  serverProxyCmd.Arg("cluster", "The ECS cluster where the server lives.").Action(setCurrent).StringVar(&clusterArg)
 
+  // Snapshot commands
+  archiveCmd = app.Command("archive", "Context for snapshot commands.")
+  archiveListCmd = archiveCmd.Command("list", "List all snapshot for a user.")
+  archiveListCmd.Arg("user", "The snapshot's user.").Required().StringVar(&userNameArg)
+  archiveListCmd.Arg("bucket", "The name of the S3 bucket we're using to store snapshots in.").Default("craft-config-test").StringVar(&bucketNameArg)
+
+  setupLogs()
 }
 
 
@@ -229,6 +240,7 @@ func DoICommand(line string, sess *session.Session, ecsSvc *ecs.ECS, ec2Svc *ec2
       // Cluster Commands
       case clusterListCmd.FullCommand(): err = doListClusters(sess)
       case clusterStatusCmd.FullCommand(): err = doClusterStatus(sess)
+      case clusterUseCmd.FullCommand(): err = doUseCluster()
 
       // Server Commands
       case serverLaunchCmd.FullCommand(): err = doLaunchServerCmd(sess)
@@ -237,9 +249,10 @@ func DoICommand(line string, sess *session.Session, ecsSvc *ecs.ECS, ec2Svc *ec2
       case serverListCmd.FullCommand(): err = doListServersCmd(sess)
       case serverDescribeAllCmd.FullCommand(): err = doDescribeAllServersCmd(sess)
       case serverDescribeCmd.FullCommand(): err = doDescribeServerCmd()
+      case serverProxyCmd.FullCommand(): err = doServerProxyCmd(sess)
 
       // Snapshot commands
-      case snapshotListCmd.FullCommand(): err = doSnapshotListCmd(sess)
+      case archiveListCmd.FullCommand(): err = doArchiveListCmd(sess)
     }
   }
   return err
@@ -274,6 +287,7 @@ func doVerbose() (error) {
   } else {
     fmt.Println("Verbose is off.")
   }
+  configureLogs()
   return nil
 }
 
@@ -288,12 +302,32 @@ func doDebug() (error) {
   } else {
     fmt.Println("Debug is off.")
   }
+  configureLogs()
   return nil
 }
 
 func toggleDebug() bool {
   debug = !debug
   return debug
+}
+
+func configureLogs() {
+  if debug || verbose {
+    log.SetLevel(logrus.DebugLevel)
+    mclib.SetLogLevel(logrus.DebugLevel)
+    awslib.SetLogLevel(logrus.DebugLevel)
+  } else {
+    log.SetLevel(logrus.InfoLevel)
+    mclib.SetLogLevel(logrus.InfoLevel)
+    awslib.SetLogLevel(logrus.InfoLevel)
+  }
+}
+
+func setupLogs() {
+  formatter := new(sl.TextFormatter)
+  formatter.FullTimestamp = true
+  log.SetFormatter(formatter)
+  log.SetLevel(logrus.InfoLevel)
 }
 
 func doQuit(sess *session.Session) (error) {

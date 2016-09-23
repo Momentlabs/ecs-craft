@@ -12,8 +12,8 @@ import (
   //
   // Careful now ...
   //
-  // "mclib"
-  "github.com/jdrivas/mclib"
+  "mclib"
+  // "github.com/jdrivas/mclib"
   
   // "awslib"
   "github.com/jdrivas/awslib"
@@ -79,8 +79,8 @@ func doStartServerCmd(sess *session.Session) (err error) {
     // TODO:
     serverEnv[mclib.WorldKey] = snapshotName
    } else {
-    serverEnv[mclib.WorldKey] = mclib.SnapshotURI(DefaultArchiveBucket, userName, serverName, snapshotName)
-
+    return fmt.Errorf("Please use useFullURIFlag until further notice.")
+    // serverEnv[mclib.WorldKey] = mclib.ServerSnapshotURI(DefaultArchiveBucket, userName, serverName, snapshotName)
   }
 
   fmt.Println("Startig minecraft server:")
@@ -234,14 +234,21 @@ func doListServersCmd(sess *session.Session) (err error) {
   return err
 }
 
-func allBindingsString(bindings []*ecs.NetworkBinding) (s string) {
-  s += "["
-  for i, bind := range bindings {
-    s += fmt.Sprintf("%d:%d", *bind.ContainerPort, *bind.HostPort)
-    if i+1 < len(bindings) {s += ", "}
+func doServerProxyCmd(sess *session.Session) (err error) {
+  var s *mclib.Server
+  if s, err = mclib.GetServerForName(serverNameArg, currentCluster, sess); err != nil {
+    return err
   }
-  s += "]"
-  return s
+
+  var p *mclib.Proxy
+  if p, err = mclib.GetProxyByName(proxyNameArg, currentCluster, sess); err != nil {
+    return err
+  }
+
+  if err = p.AddServer(s); err != nil { return err }
+  if err = p.ProxyForServer(s); err != nil { return err }
+
+  return nil
 }
 
 func doDescribeAllServersCmd(sess *session.Session) (error) {

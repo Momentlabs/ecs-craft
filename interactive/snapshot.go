@@ -20,9 +20,10 @@ import (
 
 )
 
-func doSnapshotListCmd(sess *session.Session) (error) {
+func doArchiveListCmd(sess *session.Session) (error) {
   // resp, err := GetSnapshotListForUser(userNameArg)
-  snaps, err := mclib.GetSnapshotList(userNameArg, bucketNameArg, sess)
+  am, err := mclib.GetArchives(userNameArg, bucketNameArg, sess)
+  snaps := am[userNameArg]
   if err == nil {
     sort.Sort(mclib.ByLastMod(snaps))
     headerString := fmt.Sprintf("%s%s: %d snapshots for %s in bucket [%s].%s", 
@@ -32,10 +33,10 @@ func doSnapshotListCmd(sess *session.Session) (error) {
     fmt.Printf("%s\n",headerString)
     tabFlags := tabwriter.StripEscape | tabwriter.DiscardEmptyColumns //| tabwriter.Debug
     w := tabwriter.NewWriter(os.Stdout, 19, 8, 1, ' ', tabFlags)
-    fmt.Fprintf(w, "%sUser\tServer\tLastMode\tKey%s\n", emphColor, resetColor)
+    fmt.Fprintf(w, "%sUser\tServer\tType\tLastMode\tKey%s\n", emphColor, resetColor)
     for _, a := range snaps {   //  snaps is a list of Archives
-      fmt.Fprintf(w, "%s%s\t%s\t%s\t%s%s\n", defaultColor, a.UserName, a.ServerName, 
-        a.LastMod().Format(time.RFC1123), a.S3Key(), resetColor)
+      fmt.Fprintf(w, "%s%s\t%s\t%s\t%s\t%s%s\n", defaultColor, a.UserName, a.ServerName, 
+        a.Type, a.LastMod().Format(time.RFC1123), a.S3Key(), resetColor)
       w.Flush()
     }
     // Put a status line at the bottom if there are a few lines.

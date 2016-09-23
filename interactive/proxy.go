@@ -37,7 +37,7 @@ func doListProxies(sess *session.Session) (error) {
 }
 
 func doAttachProxy(sess *session.Session) (error) {
-  p, err := mclib.GetProxyByName(currentCluster, proxyNameArg, sess)
+  p, err := mclib.GetProxyByName(proxyNameArg, currentCluster, sess)
   if err == nil {
     domainName, changeInfo, err := p.AttachToNetwork()
     if err == nil {
