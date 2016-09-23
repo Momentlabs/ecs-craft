@@ -35,3 +35,8 @@ func doClusterStatus(sess *session.Session) (error) {
   fmt.Printf("%sCommand not implemented.%s\n", warnColor, resetColor)
   return nil
 }
+
+func doUseCluster() (error) {
+  fmt.Printf("%s%s using cluster: %s%s\n", titleColor, time.Now().Local().Format(time.RFC1123), currentCluster, resetColor)
+  return nil
+}
