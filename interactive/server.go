@@ -12,8 +12,8 @@ import (
   //
   // Careful now ...
   //
-  "mclib"
-  // "github.com/jdrivas/mclib"
+  // "mclib"
+  "github.com/jdrivas/mclib"
   
   // "awslib"
   "github.com/jdrivas/awslib"
