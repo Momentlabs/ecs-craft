@@ -12,9 +12,9 @@ var rl = readline.createInterface({input: process.stdin, output: process.stdin})
 
 gulp.task('test', function() {
   if(verbose) {
-    args = ["test", "-v"]
+    args = ["test", "-v", "./..."]
   } else {
-    args = ["test"]
+    args = ["test", "./..."]
   }
 
   test = child.spawnSync("go", args)
@@ -29,6 +29,10 @@ gulp.task('test', function() {
   } else {
     util.log(chalk.white.bgRed.bold(" GO Test Failed "))
     var lines = test.stdout.toString().split("\n");
+    for (var l in lines) {
+      util.log(chalk.red(lines[l]));
+    }
+    var lines = test.stderr.toString().split("\n");
     for (var l in lines) {
       util.log(chalk.red(lines[l]));
     }
