@@ -37,7 +37,7 @@ func doListProxies(sess *session.Session) (error) {
 }
 
 func doAttachProxy(sess *session.Session) (error) {
-  p, err := mclib.GetProxyByName(proxyNameArg, currentCluster, sess)
+  p, err := mclib.GetProxyFromName(proxyNameArg, currentCluster, sess)
   if err == nil {
     domainName, changeInfo, err := p.AttachToNetwork()
     if err == nil {
@@ -103,24 +103,17 @@ func doLaunchProxy(sess *session.Session) (error) {
   return nil
 }
 
-// TODO: This could be made more robust by returning
-// an error and noting if there were conflicts on the command line:
-// e.g. We actively selected conflicting port-plan and a task-def.
-// Probalby not worth the trouble.
-// TODO: This is not the way to do this. We need to integrate in mclib
-// this kind of configuration. ...
-// However, this should implement the following behavior:
-// If we haven't specifically said what we're going to do with resepect to
-// Random or Default (25565) definnitions, we'll use whatever the mclib tell
-// us is the deffault.
-func getProxyTaskDef() (string) {
-  switch proxyPortArg {
-    case proxyDefaultPort: return mclib.BungeeProxyDefaultPortTaskDef
-    case proxyRandomPort: return mclib.BungeeProxyRandomPortTaskDef
-    case proxyUnselectedPort: return proxyTaskDefArg
+// This implements logic to support using a default taskdef with either Random or 
+// the DefaultPort configuration. Or any task-definition at all.
+func getProxyTaskDef() (td string) {
+  td = proxyTaskDefArg
+  switch proxyTaskDefArg {
+  case "defaultCraftPort":
+    td = mclib.BungeeProxyDefaultPortTaskDef
+  case "defaultRandomPort":
+    td = mclib.BungeeProxyRandomPortTaskDef
   }
-  // should never get here.
-  return proxyTaskDefArg
+  return td
 }
 
 // Communicate DNS update status.
@@ -182,6 +175,16 @@ func setAlertOnDnsChangeSync(changeInfo *route53.ChangeInfo, sess *session.Sessi
   })
 }
 
+  // Set AWS_REGION to pass the region automatically
+  // to everyone. The AWS-SDK looks for this
+  // env when setting up a session (this also plays well with
+  // using IAM Roles for credentials). 
+  // Specifically this makes it possible to log into any container
+  // and immediatley use craft-config to do on the fly backups etc.
+  // TODO: Consider moving each of these envs into their own
+  // separate basic defaults, which can be leveraged into
+  // the separate proxy and barse verions.
+  // DRY
 func getProxyTaskEnvironment(proxyName, region, bucketName string) awslib.ContainerEnvironmentMap {
 
   serverName := fmt.Sprintf("%s-hub-server", proxyName)
@@ -191,6 +194,7 @@ func getProxyTaskEnvironment(proxyName, region, bucketName string) awslib.Contai
     mclib.RoleKey: mclib.CraftProxyRole,
     mclib.ServerNameKey: proxyName,
     mclib.RconPasswordKey: mclib.ProxyRconPasswordDefault,
+    "AWS_REGION": region,
   }
 
   cenv[mclib.BungeeProxyHubServerContainerName] = map[string]string {
@@ -218,16 +222,9 @@ func getProxyTaskEnvironment(proxyName, region, bucketName string) awslib.Contai
     mclib.LevelKey: mclib.ProxyHubLevelDefault,
     mclib.OnlineModeKey: mclib.ProxyHubOnlineModeDefault,
     mclib.JVMOptsKey: mclib.ProxyHubJVMOptsDefault,
+    "AWS_REGION": region,
   }
 
-  // Set AWS_REGION to pass the region automatically
-  // to the minecraft-controller. The AWS-SDK looks for this
-  // env when setting up a session (this also plays well with
-  // using IAM Roles for credentials).
-  // TODO: Consider moving each of these envs into their own
-  // separate basic defaults, which can be leveraged into
-  // the separate proxy and barse verions.
-  // DRY
   cenv[mclib.BungeeProxyHubControllerContainerName] = map[string]string {
     mclib.RoleKey: mclib.CraftControllerRole,
     mclib.ServerNameKey: serverName,

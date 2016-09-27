@@ -236,12 +236,12 @@ func doListServersCmd(sess *session.Session) (err error) {
 
 func doServerProxyCmd(sess *session.Session) (err error) {
   var s *mclib.Server
-  if s, err = mclib.GetServerForName(serverNameArg, currentCluster, sess); err != nil {
+  if s, err = mclib.GetServerFromName(serverNameArg, currentCluster, sess); err != nil {
     return err
   }
 
   var p *mclib.Proxy
-  if p, err = mclib.GetProxyByName(proxyNameArg, currentCluster, sess); err != nil {
+  if p, err = mclib.GetProxyFromName(proxyNameArg, currentCluster, sess); err != nil {
     return err
   }
 
@@ -250,6 +250,23 @@ func doServerProxyCmd(sess *session.Session) (err error) {
 
   return nil
 }
+
+// Add a server to the same network as a proxy.
+// func addServerToProxy(sess *session.Session) (err error) {
+//   s, err := mclib.GetServerFromName(serverNameArg, currentCluster, sess)
+//   if err != nil {
+//     return err
+//   }
+
+//   p, err := mclib.GetProxyFromName(proxyNameArg, currentCluster, sess)
+//   if err != nil {
+//     return err
+//   }
+
+//   domainNAme, changeInfo, err := s.AttachToNetwork()
+
+//   return nil
+// }
 
 func doDescribeAllServersCmd(sess *session.Session) (error) {
   // TODO: This assumes that all tasks in a cluster a minecraft servers.

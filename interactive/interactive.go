@@ -28,15 +28,11 @@ import (
 
 const(
   defaultCluster = "minecraft"
+  // please see getProxyTaskDef to use these
   defaultServerTaskDef = mclib.DefaultServerTaskDefinition
-  defaultProxyTaskDef = mclib.DefaultProxyTaskDefinition
+  defaultProxyTaskDef = mclib.BungeeProxyDefaultPortTaskDef
 )
 
-const(
-  proxyUnselectedPort = "unselected-port"
-  proxyDefaultPort = "default-port"
-  proxyRandomPort = "random-port"
-)
 
 
 var (
@@ -56,6 +52,8 @@ var (
   debug bool
   testString []string
 
+  useClusterCmd *kingpin.CmdClause
+
   clusterCmd *kingpin.CmdClause
   clusterListCmd *kingpin.CmdClause
   clusterStatusCmd *kingpin.CmdClause
@@ -73,6 +71,7 @@ var (
   serverListCmd *kingpin.CmdClause
   serverDescribeAllCmd *kingpin.CmdClause
   serverDescribeCmd *kingpin.CmdClause
+  serverAttachCmd *kingpin.CmdClause
   serverProxyCmd *kingpin.CmdClause
 
   envCmd *kingpin.CmdClause
@@ -82,8 +81,8 @@ var (
   serverTaskArg string
 
   proxyNameArg string
+  // Please See getProxyTaskDef() to use this.
   proxyTaskDefArg string
-  proxyPortArg string
 
   serverTaskArnArg string
   bucketNameArg string
@@ -130,6 +129,11 @@ func init() {
   quit = app.Command("quit", "exit the program.")
 
 
+  // This doesn't actually do anything but set a new default cluster.
+  // It doesn't have an execution portion to it, this is all handled in the Action.
+  useClusterCmd = app.Command("use", "Set the cluster to use as a default.")
+  useClusterCmd.Arg("cluster", "New default cluster.").Action(setCurrent).StringVar(&clusterArg)
+
   // Cluster Commands
   clusterCmd = app.Command("cluster", "Context for cluster commands.")
   clusterListCmd = clusterCmd.Command("list", "List short status of all the clusters.")
@@ -154,8 +158,8 @@ func init() {
   proxyLaunchCmd = proxyCmd.Command("launch", "Launch a proxy into the cluster")
   proxyLaunchCmd.Arg("proxy-name", "Name for the launched proxy.").Required().StringVar(&proxyNameArg)
   proxyLaunchCmd.Arg("cluster", "ECS Cluster for the lauched proxy.").Action(setCurrent).StringVar(&clusterArg)
-  proxyLaunchCmd.Arg("ecs-task","ECS Task definig containers etc, to used in launching the proxy.").Default(defaultProxyTaskDef).StringVar(&proxyTaskDefArg)
-  proxyLaunchCmd.Flag("port", "Choose either the default mclib default port (25565) or a random port selected at container launch.").Default(proxyUnselectedPort).EnumVar(&proxyPortArg, proxyUnselectedPort, proxyDefaultPort, proxyRandomPort)
+  proxyLaunchCmd.Arg("ecs-task","ECS Task definig containers etc, to used in launching the proxy. You can choose \"defaultCraftPort\", \"defaultRandomPort\", or any valid task-definition").Default(defaultProxyTaskDef).StringVar(&proxyTaskDefArg)
+  // proxyLaunchCmd.Flag("port", "Choose either the default craft port (25565) or a random port selected at container launch.").Default(proxyUnselectedPort).EnumVar(&proxyPortArg, proxyUnselectedPort, proxyDefaultPort, proxyRandomPort)
 
   proxyAttachCmd = proxyCmd.Command("attach", "Attach proxy to the network by hand.")
   proxyAttachCmd.Arg("proxy-name", "Name of the proxy you want to attach to the network.").Required().StringVar(&proxyNameArg)
@@ -191,6 +195,10 @@ func init() {
   serverDescribeCmd = serverCmd.Command("describe", "Show some details for a users server.")
   serverDescribeCmd.Arg("user", "The user that owns the server.").Required().StringVar(&userNameArg)
   serverDescribeCmd.Arg("cluster", "The ECS cluster where the server lives.").Action(setCurrent).StringVar(&clusterArg)
+
+  // serverAttachCmd = serverCmd.Command("attach", "Attach a server to the network (creating DNS along the way.")
+  // serverAttachCmd.Arg("server-name", "The name of the server to attach to the network").Required().StringVar(&serverNameArg)
+  // serverAttachCmd.Arg("cluster", "The ECS cluster where the server lives.").Action(setCurrent).StringVar(&clusterArg)
 
   serverProxyCmd = serverCmd.Command("proxy", "This puts a server under a proxy. Making it avaible to proxy members, and using the proxy as a DNS proxy for the server.")
   serverProxyCmd.Arg("server", "Name of server to attach to proxy.").Required().StringVar(&serverNameArg)
@@ -250,9 +258,10 @@ func DoICommand(line string, sess *session.Session, ecsSvc *ecs.ECS, ec2Svc *ec2
       case serverDescribeAllCmd.FullCommand(): err = doDescribeAllServersCmd(sess)
       case serverDescribeCmd.FullCommand(): err = doDescribeServerCmd()
       case serverProxyCmd.FullCommand(): err = doServerProxyCmd(sess)
+      // case serverAttachCmd.FullCommand(): err = doServerAttachCmd(sess)
 
       // Snapshot commands
-      case archiveListCmd.FullCommand(): err = doArchiveListCmd(sess)
+      // case archiveListCmd.FullCommand(): err = doArchiveListCmd(sess)
     }
   }
   return err

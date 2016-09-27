@@ -9,7 +9,7 @@ import(
 )
 
 func doListEnv(sess *session.Session) (error) {
-  s, err := mclib.GetServerForName(serverNameArg, currentCluster, sess)
+  s, err := mclib.GetServerFromName(serverNameArg, currentCluster, sess)
   if err != nil { return err }
 
   env, ok := s.ServerEnvironment() 
