@@ -8,6 +8,10 @@ import(
   "github.com/aws/aws-sdk-go/aws/session"
   "github.com/aws/aws-sdk-go/service/route53"
   "github.com/jdrivas/awslib"
+  "github.com/aws/aws-sdk-go/service/ecs"
+
+  // "mclib"
+  "github.com/jdrivas/mclib"
 )
 
 
@@ -31,5 +35,45 @@ func setAlertOnDnsChangeSync(changeInfo *route53.ChangeInfo, sess *session.Sessi
       *ci.Status, ci.SubmittedAt.Local().Format(time.RFC822), 
       awslib.ShortDurationString(time.Since(*ci.SubmittedAt)), *ci.Comment, resetColor)
     w.Flush()
+  })
+}
+
+// Wait and notify on proxy task running.
+// Then on success create DNS for the proxy.
+// TODO: wants refactoring too much going on here. 
+// perhaps the thing to do is turn this into a wait-on-with-notify taking a function
+// to execute when the dns is ready. See for integration with above.
+func setUpProxyWaitAlerts(clusterName, waitTask string, sess *session.Session) {
+  fmt.Printf("%sWaiting for containers to be available before attaching to network. Updates will follow.%s\n", warnColor, resetColor)
+  awslib.OnTaskRunning(clusterName, waitTask, sess,
+    func(taskDecrip *ecs.DescribeTasksOutput, err error) {
+      if err == nil {
+        p, err := mclib.GetProxy(clusterName, waitTask, sess)
+        if err == nil {
+          fmt.Printf("\n%sProxy Task Running, server comming up.%s\n", titleColor, resetColor)
+          w := tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
+          fmt.Fprintf(w, "%sProxy\tProxy IP\tRcon IP\tTask%s\n", titleColor, resetColor)
+          fmt.Fprintf(w, "%s%s\t%s\t%s\t%s%s\n", successColor,
+            p.Name, p.PublicIpAddress(), p.RconAddress(), 
+            awslib.ShortArnString(&p.TaskArn), resetColor)
+          w.Flush()
+        } else {
+          fmt.Printf("%sAlerted that a new proxy task is running, but there was an error getting details: %s%s\n",
+            warnColor, err, resetColor)
+        }
+
+        fmt.Printf("%sAttaching to network ....%s", warnColor, resetColor)
+        domainName, changeInfo, err := p.AttachToNetwork()
+        if err == nil {
+          fmt.Printf("%s Attached. %s: %s => %s. It may take some time for the DNS to propocate.%s\n",
+            successColor, changeInfo.SubmittedAt.Local().Format(time.RFC1123), domainName, p.PublicProxyIp,
+            resetColor)
+          setAlertOnDnsChangeSync(changeInfo, sess)
+        } else {
+          fmt.Printf("%s Failed to attach to DNS: %s%s\n", failColor, err, resetColor)
+        }
+      } else {
+        fmt.Printf("%sError on proxy task running alert: %s%s\n", failColor, err, resetColor)
+      }
   })
 }

@@ -7,8 +7,6 @@ import(
   "time"
   "text/tabwriter"
   "github.com/aws/aws-sdk-go/aws/session"
-  "github.com/aws/aws-sdk-go/service/ecs"
-  // "github.com/aws/aws-sdk-go/service/route53"
 
   // "mclib"
   "github.com/jdrivas/mclib"
@@ -118,53 +116,17 @@ func getProxyTaskDef() (td string) {
   return td
 }
 
-// Communicate DNS update status.
-func setUpProxyWaitAlerts(clusterName, waitTask string, sess *session.Session) {
-  fmt.Printf("%sWaiting for containers to be available before attaching to network. Updates will follow.%s\n", warnColor, resetColor)
-  awslib.OnTaskRunning(clusterName, waitTask, sess,
-    func(taskDecrip *ecs.DescribeTasksOutput, err error) {
-      if err == nil {
-        p, err := mclib.GetProxy(clusterName, waitTask, sess)
-        if err == nil {
-          fmt.Printf("\n%sProxy Task Running, server comming up.%s\n", titleColor, resetColor)
-          w := tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
-          fmt.Fprintf(w, "%sProxy\tProxy IP\tRcon IP\tTask%s\n", titleColor, resetColor)
-          fmt.Fprintf(w, "%s%s\t%s\t%s\t%s%s\n", successColor,
-            p.Name, p.PublicIpAddress(), p.RconAddress(), 
-            awslib.ShortArnString(&p.TaskArn), resetColor)
-          w.Flush()
-        } else {
-          fmt.Printf("%sAlerted that a new proxy task is running, but there was an error getting details: %s%s\n",
-            warnColor, err, resetColor)
-        }
 
-        fmt.Printf("%sAttaching to network ....%s", warnColor, resetColor)
-        domainName, changeInfo, err := p.AttachToNetwork()
-        if err == nil {
-          fmt.Printf("%s Attached. %s: %s => %s. It may take some time for the DNS to propocate.%s\n",
-            successColor, changeInfo.SubmittedAt.Local().Format(time.RFC1123), domainName, p.PublicProxyIp,
-            resetColor)
-          setAlertOnDnsChangeSync(changeInfo, sess)
-        } else {
-          fmt.Printf("%s Failed to attach to DNS: %s%s\n", failColor, err, resetColor)
-        }
-      } else {
-        fmt.Printf("%sError on proxy task running alert: %s%s\n", failColor, err, resetColor)
-      }
-  })
-}
-
-
-  // Set AWS_REGION to pass the region automatically
-  // to everyone. The AWS-SDK looks for this
-  // env when setting up a session (this also plays well with
-  // using IAM Roles for credentials). 
-  // Specifically this makes it possible to log into any container
-  // and immediatley use craft-config to do on the fly backups etc.
-  // TODO: Consider moving each of these envs into their own
-  // separate basic defaults, which can be leveraged into
-  // the separate proxy and barse verions.
-  // DRY
+// Set AWS_REGION to pass the region automatically
+// to everyone. The AWS-SDK looks for this
+// env when setting up a session (this also plays well with
+// using IAM Roles for credentials). 
+// Specifically this makes it possible to log into any container
+// and immediatley use craft-config to do on the fly backups etc.
+// TODO: Consider moving each of these envs into their own
+// separate basic defaults, which can be leveraged into
+// the separate proxy and barse verions.
+// DRY
 func getProxyTaskEnvironment(proxyName, region, bucketName string) awslib.ContainerEnvironmentMap {
 
   serverName := fmt.Sprintf("%s-hub-server", proxyName)
