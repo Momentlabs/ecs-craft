@@ -73,6 +73,9 @@ var (
   serverDescribeCmd *kingpin.CmdClause
   serverAttachCmd *kingpin.CmdClause
   serverProxyCmd *kingpin.CmdClause
+  serverUnProxyCmd *kingpin.CmdClause
+
+  dnsCmd *kingpin.CmdClause
 
   envCmd *kingpin.CmdClause
   envListCmd *kingpin.CmdClause
@@ -205,6 +208,14 @@ func init() {
   serverProxyCmd.Arg("proxy", "The name of the proxy.").Required().StringVar(&proxyNameArg)
   serverProxyCmd.Arg("cluster", "The ECS cluster where the server lives.").Action(setCurrent).StringVar(&clusterArg)
 
+  serverUnProxyCmd = serverCmd.Command("unproxy", "Take the server out of proxies control and removes the host mapping from the proxy")
+  serverUnProxyCmd.Arg("server", "Name of the server to detach").Required().StringVar(&serverNameArg)
+  serverUnProxyCmd.Arg("proxy", "Name of the proxy with server to remove.").Required().StringVar(&proxyNameArg)
+  serverUnProxyCmd.Arg("cluster", "The ECS cluster where the server lives.").Action(setCurrent).StringVar(&clusterArg)
+
+  // DNS 
+  dnsCmd = app.Command("dns", "List Craft DNS for the network.")  
+
   // Snapshot commands
   archiveCmd = app.Command("archive", "Context for snapshot commands.")
   archiveListCmd = archiveCmd.Command("list", "List all snapshot for a user.")
@@ -258,6 +269,8 @@ func DoICommand(line string, sess *session.Session, ecsSvc *ecs.ECS, ec2Svc *ec2
       case serverDescribeAllCmd.FullCommand(): err = doDescribeAllServersCmd(sess)
       case serverDescribeCmd.FullCommand(): err = doDescribeServerCmd()
       case serverProxyCmd.FullCommand(): err = doServerProxyCmd(sess)
+      case serverUnProxyCmd.FullCommand(): err = doServerUnProxyCmd(sess)
+      case dnsCmd.FullCommand(): err = doListDNS(sess)
       // case serverAttachCmd.FullCommand(): err = doServerAttachCmd(sess)
 
       // Snapshot commands

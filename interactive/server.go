@@ -251,22 +251,31 @@ func doServerProxyCmd(sess *session.Session) (err error) {
   return nil
 }
 
-// Add a server to the same network as a proxy.
-// func addServerToProxy(sess *session.Session) (err error) {
-//   s, err := mclib.GetServerFromName(serverNameArg, currentCluster, sess)
-//   if err != nil {
-//     return err
-//   }
+func doServerUnProxyCmd(sess *session.Session) (err error) {
 
-//   p, err := mclib.GetProxyFromName(proxyNameArg, currentCluster, sess)
-//   if err != nil {
-//     return err
-//   }
+  s, err := mclib.GetServerFromName(serverNameArg, currentCluster, sess)
+  if err != nil { return err }
+  p, err := mclib.GetProxyFromName(proxyNameArg, currentCluster, sess)
+  if err != nil { return err }
 
-//   domainNAme, changeInfo, err := s.AttachToNetwork()
+  rerr := p.RemoveServer(s)
+  changeInfo, derr := p.DetachFromProxyNetwork(s)
 
-//   return nil
-// }
+  switch {
+    case rerr != nil && derr != nil:
+      err = fmt.Errorf("Failed to remove server from proxy: %s. Failed to detach server from network: %s", rerr, derr)
+    case rerr != nil:
+      err = rerr
+    case derr != nil:
+      err = derr
+    default:
+      fmt.Printf("%sRemoved server %s from proxy %s%s\n", successColor, s.Name, p.Name, resetColor)
+      setAlertOnDnsChangeSync(changeInfo, sess)
+  }
+
+  return err
+}
+
 
 func doDescribeAllServersCmd(sess *session.Session) (error) {
   // TODO: This assumes that all tasks in a cluster a minecraft servers.
