@@ -15,12 +15,36 @@ import(
   "github.com/jdrivas/mclib"
   
   // "awslib"
-  "github.com/jdrivas/awslib"
+  // "github.com/jdrivas/awslib"
 )
 
 func doListDNS(sess *session.Session) (err error) {
-  records, err := awslib.ListDNSRecords(mclib.DefaultProxyTLD(), sess)
+
+  records, err := mclib.GetDNSRecords(sess)
   if err != nil { return err }
+
+  displayDNSRecords(records)
+
+  return err
+}
+
+func doListProxyDNS(sess *session.Session) (err error) {
+  p, err := mclib.GetProxyFromName(proxyNameArg, currentCluster, sess)
+  if err != nil { return err }
+
+  records, err := p.DNSRecords()
+  if err != nil { return err }
+
+  displayDNSRecords(records)
+
+  return err
+}
+
+func displayDNSRecords(records []*route53.ResourceRecordSet) {
+  if len(records) == 0 {
+    fmt.Printf("No records found.\n")
+    return
+  } 
 
   w := tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
   fmt.Fprintf(w, "%sName\tTTL\tRecords%s\n", titleColor, resetColor)
@@ -29,8 +53,6 @@ func doListDNS(sess *session.Session) (err error) {
       *r.Name, *r.TTL, dnsResourceString(r.ResourceRecords),  resetColor) 
   }
   w.Flush()
-
-  return err
 }
 
 func dnsResourceString(rs []*route53.ResourceRecord) (string) {

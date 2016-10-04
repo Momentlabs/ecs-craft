@@ -63,6 +63,7 @@ var (
   proxyLaunchCmd *kingpin.CmdClause
   proxyListCmd *kingpin.CmdClause
   proxyAttachCmd *kingpin.CmdClause
+  proxyDNSCmd *kingpin.CmdClause
 
   serverCmd *kingpin.CmdClause
   serverLaunchCmd *kingpin.CmdClause
@@ -168,6 +169,10 @@ func init() {
   proxyAttachCmd.Arg("proxy-name", "Name of the proxy you want to attach to the network.").Required().StringVar(&proxyNameArg)
   proxyAttachCmd.Arg("clsuter", "The cluster where you'll find the proxy.").Action(setCurrent).StringVar(&clusterArg)
 
+  proxyDNSCmd = proxyCmd.Command("dns", "List DNS records associated with this proxy.")
+  proxyDNSCmd.Arg("proxy-name", "Name of the proxy.").Required().StringVar(&proxyNameArg)
+  proxyDNSCmd.Arg("clsuter", "The cluster where you'll find the proxy.").Action(setCurrent).StringVar(&clusterArg)
+
   // Server commands
   serverCmd = app.Command("server","Context for minecraft server commands.")
 
@@ -255,6 +260,7 @@ func DoICommand(line string, sess *session.Session, ecsSvc *ecs.ECS, ec2Svc *ec2
       case proxyLaunchCmd.FullCommand(): err = doLaunchProxy(sess)
       case proxyListCmd.FullCommand(): err = doListProxies(sess)
       case proxyAttachCmd.FullCommand(): err = doAttachProxy(sess)
+      case proxyDNSCmd.FullCommand(): err = doListProxyDNS(sess)
 
       // Cluster Commands
       case clusterListCmd.FullCommand(): err = doListClusters(sess)
@@ -285,6 +291,8 @@ func DoICommand(line string, sess *session.Session, ecsSvc *ecs.ECS, ec2Svc *ec2
 // has been set in the command. 
 // Currently we only use this for cluster setting and the change is
 // expressed in the prompt. see promptLoop below.
+// TODO: need to check if the new cluster is valid, print an error message if not
+// and only use change current if the new one is valid.
 func setCurrent(pc *kingpin.ParseContext) (error) {
 
   for _, pe := range pc.Elements {
