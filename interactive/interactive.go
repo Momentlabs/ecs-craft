@@ -69,6 +69,7 @@ var (
   serverCmd *kingpin.CmdClause
   serverLaunchCmd *kingpin.CmdClause
   serverStartCmd *kingpin.CmdClause
+  serverRestartCmd *kingpin.CmdClause
   serverTerminateCmd *kingpin.CmdClause
   serverListCmd *kingpin.CmdClause
   serverDescribeAllCmd *kingpin.CmdClause
@@ -199,6 +200,13 @@ func init() {
   serverStartCmd.Arg("ecs-task", "ECS Task that represents a running minecraft server.").Default(defaultServerTaskDef).StringVar(&serverTaskArg)
   // serverStartCmd.Arg("ecs-conatiner-name", "Container name for the minecraft server (used for environment variables.").Default("minecraft").StringVar(&serverContainerNameArg)
 
+  serverRestartCmd = serverCmd.Command("restart", "Restart a server, using the latest backup.")
+  serverRestartCmd.Arg("server-name","Name of the server. This is an identifier for the serve. (e.g. test-server, world-play).").Required().StringVar(&serverNameArg)
+  serverRestartCmd.Arg("proxy", "The name of the proxy.").Required().StringVar(&proxyNameArg)
+  serverRestartCmd.Arg("snapshot", "Name of snapshot for starting server.").Default("").StringVar(&snapshotNameArg)
+  serverRestartCmd.Arg("cluster", "ECS Cluster for the server containers.").Action(setCurrent).StringVar(&clusterArg)
+  serverRestartCmd.Arg("ecs-task", "ECS Task that represents a running minecraft server.").Default(defaultServerTaskDef).StringVar(&serverTaskArg)
+
   serverTerminateCmd = serverCmd.Command("terminate", "Stop this server")
   serverTerminateCmd.Arg("ecs-task-arn", "ECS Task ARN for this server.").Required().StringVar(&serverTaskArnArg)
 
@@ -278,6 +286,7 @@ func DoICommand(line string, sess *session.Session, ecsSvc *ecs.ECS, ec2Svc *ec2
       // Server Commands
       case serverLaunchCmd.FullCommand(): err = doLaunchServerCmd(sess)
       case serverStartCmd.FullCommand(): err = doStartServerCmd(sess)
+      case serverRestartCmd.FullCommand(): err = doRestartServerCmd(sess)
       case serverTerminateCmd.FullCommand(): err = doTerminateServerCmd(sess)
       case serverListCmd.FullCommand(): err = doListServersCmd(sess)
       case serverDescribeAllCmd.FullCommand(): err = doDescribeAllServersCmd(sess)

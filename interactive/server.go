@@ -69,33 +69,180 @@ func doStartServerCmd(sess *session.Session) (err error) {
   bucketName := DefaultArchiveBucket
   snapshotName := snapshotNameArg
   tdArn := serverTaskArg
+  cluster := currentCluster
 
-  ss, err := mclib.NewServerSpec(userName, serverName, region, bucketName, tdArn, sess)
-  if err != nil { return err }
+  ss, err := startServer(userName, serverName, region, bucketName, snapshotName, tdArn, cluster,sess)
 
-  serverEnv := ss.ServerContainerEnv()
-  controllerEnv := ss.ControllerContainerEnv()
-
-  if useFullURIFlag {
-    // TODO:
-    serverEnv[mclib.WorldKey] = snapshotName
-   } else {
-    return fmt.Errorf("Please use useFullURIFlag until further notice.")
-    // serverEnv[mclib.WorldKey] = mclib.ServerSnapshotURI(DefaultArchiveBucket, userName, serverName, snapshotName)
+  if err == nil {
+    serverEnv := ss.ServerContainerEnv()
+    controllerEnv := ss.ControllerContainerEnv()
+    fmt.Println("Starting minecraft server:")
+    w := tabwriter.NewWriter(os.Stdout, 4, 8, 8, ' ', 0)
+    fmt.Fprintf(w, "%sCluster\tUser\tName\tTask\tRegion\tBucket\tWorld%s\n", titleColor, resetColor)
+    fmt.Fprintf(w, "%s%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n.", nullColor,
+      currentCluster, serverEnv[mclib.ServerUserKey], serverEnv[mclib.ServerNameKey], tdArn, 
+      controllerEnv[mclib.ArchiveRegionKey], controllerEnv[mclib.ArchiveBucketKey], serverEnv["WORLD"],
+      resetColor)
+    w.Flush()
   }
-
-  fmt.Println("Startig minecraft server:")
-  w := tabwriter.NewWriter(os.Stdout, 4, 8, 8, ' ', 0)
-  fmt.Fprintf(w, "%sCluster\tUser\tName\tTask\tRegion\tBucket\tWorld%s\n", titleColor, resetColor)
-  fmt.Fprintf(w, "%s%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n.", nullColor,
-    currentCluster, serverEnv[mclib.ServerUserKey], serverEnv[mclib.ServerNameKey], tdArn, 
-    controllerEnv[mclib.ArchiveRegionKey], controllerEnv[mclib.ArchiveBucketKey], serverEnv["WORLD"],
-    resetColor)
-  w.Flush()
-
-  err = launchServer(tdArn, currentCluster, userName, ss, sess)
   return err
 }
+
+
+func doRestartServerCmd(sess *session.Session) (err error) {
+  serverName := serverNameArg
+  proxyName := proxyNameArg
+  cluster := currentCluster
+  tdArn := serverTaskArg
+  backup := snapshotNameArg
+
+
+  // Get set up ....
+  s, err  := mclib.GetServerFromName(serverName, cluster, sess)
+  if err != nil { return fmt.Errorf("Failed to get server. Server not restarted: %s", err) }
+
+  if backup == "" {
+    return fmt.Errorf("Please specify a snapshot file until we get the code written to get the latest backup for the original server.")
+    // backup, err  := s.GetLatestWorldBackup()
+    // if err != nil { return fmt.Errorf("Failed to get most recent world backup. Server not restarted: %s", err) }
+  }
+
+  p, err := mclib.GetProxyFromName(proxyName, cluster, sess)
+  if err != nil { return fmt.Errorf("Failed to get proxy. Server not restarted: %s", err)}
+  // TODO: revist if we want to start a new server even if this is not proxied.
+  proxyFound, err := p.IsServerProxied(s) 
+  if !proxyFound || err != nil {
+    if !proxyFound { err = fmt.Errorf("Server (%s) not proxied by (%d). Server not restarted: %s", s.Name, p.Name) }
+    return fmt.Errorf("Failed to find proxy for server: %s", err)
+  }
+
+
+  // .... Remove old server from proxy DNS ....
+  // For now this will be detach from proxy network.
+  // We could, and probably should, make it general (ie. Server.DetachFromNetwork(),
+  // for the moment we don't have a policy for the TLD part of a server DNS name other
+  // than in the case of proxying).
+  // TODO: Test this to  make sure there is no strange race condition:
+  // The following, deletes the DNS A record for s.DNSName() + "." + p.DNSName().
+  // Below when we attach to the proxy network, we update essentially the same record.
+  // It may make more sense to just leave the record alone. This is probably
+  // the better appraoch in case something fails down there and we really
+  // just want the server unavailable until we fix it, but ......
+  changeInfo, err := p.DetachFromProxyNetwork(s)
+  if err != nil { return fmt.Errorf("Failed to remove server from DNS. Server not restarted: %s", err) }
+  fmt.Printf("%sRemoved DNS for server %s: %s.%s\n", successColor, s.Name,  *changeInfo.Comment, resetColor)
+  setAlertOnDnsChangeSync(changeInfo, sess)
+
+
+  // .... start new server from backup ....
+  ss, err := startServer(s.User, s.Name, *s.AWSSession.Config.Region, s.ArchiveBucket, backup, tdArn, cluster, sess)
+  if err != nil { 
+    return fmt.Errorf("Failed to start new server." +
+      "Server DNS is no longer pointing to proxy server. Server not restarted: %s", err) 
+  } else {
+    serverEnv := ss.ServerContainerEnv()
+    controllerEnv := ss.ControllerContainerEnv()
+    fmt.Printf("%sStarting new minecraft server with snapshot %s:%s\n", successColor, backup, resetColor)
+    w := tabwriter.NewWriter(os.Stdout, 4, 8, 8, ' ', 0)
+    fmt.Fprintf(w, "%sCluster\tUser\tName\tTask\tRegion\tBucket\tWorld%s\n", titleColor, resetColor)
+    fmt.Fprintf(w, "%s%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n.", nullColor,
+      currentCluster, serverEnv[mclib.ServerUserKey], serverEnv[mclib.ServerNameKey], tdArn, 
+      controllerEnv[mclib.ArchiveRegionKey], controllerEnv[mclib.ArchiveBucketKey], serverEnv["WORLD"],
+      resetColor)
+    w.Flush()
+  }
+
+  // .... Unproxy old server ....
+  successMessages := make([]string,0)
+  errorMessages := make([]string, 0)
+
+  serr := p.StopProxyForServer(s)
+  if serr == nil {
+    successMessages = append(successMessages,"Proxy no longer acts as proxy for Server")
+  } else {
+    em := fmt.Sprintf("Failed to stop proxy for server: %s", serr)
+    errorMessages = append(errorMessages, em)
+  }
+
+  rerr := p.RemoveServerAccess(s)
+  if rerr == nil {
+    successMessages = append(successMessages,"Server access removed from Proxy")
+  } else {
+    em := fmt.Sprintf("Failed to remove server access from Proxy: %s", rerr)
+    errorMessages = append(errorMessages, em)
+  }
+
+  if serr != nil || rerr != nil {
+    var successMessage string
+    if len(successMessages) == 1 {
+      successMessage = successMessages[0]
+    } else { 
+      successMessage = strings.Join(successMessages, ", ")
+    }
+
+    var errorMessage string
+    if len(errorMessages) == 1 {
+      errorMessage = errorMessages[0]
+    } else { 
+      errorMessage = strings.Join(errorMessages, ", ")
+    }
+
+    em := fmt.Sprintf("%s, but %s.\nServer (%s) has not been killed. But has no DNS record.",
+      errorMessage, successMessage, s.Name)
+    return fmt.Errorf(em)
+  } else {
+    fmt.Printf("%sOld Server removed from Proxy.%s\n", successColor, resetColor)
+  }
+
+
+  // .... attach new server to proxy .....
+  err = p.AddServerAccess(s) 
+  if err != nil { 
+    return fmt.Errorf("Failed to add new server (%s) access to proxy (%s): %s\n" + 
+      "Old server has not been killed but as no DNS record, and is not available in proxy.",
+      s.Name, p.Name, err)
+  }
+  fmt.Printf("%sProxy has access to new server.\n%s", successColor, resetColor)
+
+  err = p.StartProxyForServer(s) 
+  if err != nil {
+    return fmt.Errorf("Failed to make proxy forward conentions for server (forcedHost): %s", err)
+  }
+  fmt.Printf("%sProxy will now forward connections for server.%s\n", successColor, resetColor )
+
+  sFQDN, ci, err := p.AttachToProxyNetwork(s)
+  if err != nil {
+    err = fmt.Errorf("Failed to update Server DNS to proxy: %s. However, Server access added to proxy and proxy will forward.", err)
+    return  err
+  }
+  fmt.Printf("%sServer has DNS to proxy: %s%s\n", successColor, sFQDN, resetColor)
+  setAlertOnDnsChangeSync(ci, sess)
+
+  // .... kill old server task.
+  _, err = awslib.StopTask(cluster, *s.TaskArn, sess)
+  if err != nil {
+    err = fmt.Errorf("Failed to stop original serer task. Everything else seemed to work: %s", err)
+  }
+  fmt.Printf("%sOld server sucesfullly terminated.%s\n", successColor, resetColor)
+
+  fmt.Printf("%sServer Restarted.%s\n", successColor, resetColor)
+  return err
+}
+
+
+// Set up the environment to start the server from a snapshot.
+func startServer(un, sn, region, bn, snapshotName, tdArn, clusterName string, 
+  sess *session.Session) (ss mclib.ServerSpec, err error) {
+
+  ss, err = mclib.NewServerSpec(un, sn, region, bn, tdArn, sess)
+  if err != nil { return ss, err }
+
+  serverEnv := ss.ServerContainerEnv()
+  serverEnv[mclib.WorldKey] = snapshotName
+  err = launchServer(tdArn, clusterName, un, ss, sess)
+  return ss, err
+}
+
 
 // TODO: DONT launch a server if there is already one with the same user and server names.
 // TODO: We need to be able to attach a server, on launch, to a running proxy.
@@ -104,18 +251,16 @@ func doStartServerCmd(sess *session.Session) (err error) {
 // Server/RconPort is enough.
 // The controller can then be configured to add the server to the proxy on connection.
 // Let's consider a ROLE env variable. 
-// TODO: Right the connection betwee the mclib.Server and us is a bit to brittle.
-// mclib.Server is really a reflection of what we do here, but it relies heavlily
-// on the coordination of TaskDefinition and Container variables that are really being
-// managed by mclib. More work needs to be done on proper integration. Perhaps 
+// TODO: This needs to be foled into mclib. 
 // we should be headed toward someting like:
 // var s *mclib.Server = mclib.LaunchServer(cluster, userName, serverName, env. sess)
-// or mclib.LaunchServerWithTaskDefinition(td, cluster ....)
-// func launchServer(taskDefinition, clusterName, userName string, env awslib.ContainerEnvironmentMap, sess *session.Session) (err error) {
+// or mclib.LaunchServerWithTaskDefinition(ss,sess)
+// Which might just become ss.LaunchServer()
+// and ss.LaunchServerWithWorld(worldName)
 func launchServer(tdArn, clusterName, userName string, ss mclib.ServerSpec, 
   sess *session.Session) (err error) {
 
-  serverEnv := ss.ServerContainerEnv()
+  // serverEnv := ss.ServerContainerEnv()
   controlEnv := ss.ControllerContainerEnv()
   if controlEnv[mclib.ArchiveBucketKey] == "" {
     controlEnv[mclib.ArchiveBucketKey] = DefaultArchiveBucket
@@ -132,9 +277,9 @@ func launchServer(tdArn, clusterName, userName string, ss mclib.ServerSpec,
   tasks := resp.Tasks
   failures := resp.Failures
   if err == nil {
-    newUser := serverEnv[mclib.ServerUserKey]
-    serverName := serverEnv[mclib.ServerNameKey]
-    fmt.Printf("%s launched %s for %s\n", startTime.Local().Format(time.RFC1123), serverName, newUser)
+    // newUser := serverEnv[mclib.ServerUserKey]
+    // serverName := serverEnv[mclib.ServerNameKey]
+    // fmt.Printf("%s launched %s for %s\n", startTime.Local().Format(time.RFC1123), serverName, newUser)
     if len(tasks) == 1  {
       waitForTaskArn := *tasks[0].TaskArn
       awslib.OnTaskRunning(clusterName, waitForTaskArn, sess, func(taskDescrip *ecs.DescribeTasksOutput, err error) {
@@ -164,6 +309,7 @@ func launchServer(tdArn, clusterName, userName string, ss mclib.ServerSpec,
   return err
 }
 
+// TODO: This should get moved to mclib.
 func doTerminateServerCmd(sess *session.Session) (error) {
 
   _, err := awslib.StopTask(currentCluster, serverTaskArnArg, sess)
