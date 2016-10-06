@@ -3,6 +3,7 @@ package interactive
 import (
   "fmt"
   "os"
+  "strings"
   "text/tabwriter"
   "time"
   "github.com/aws/aws-sdk-go/aws/session"
@@ -235,20 +236,26 @@ func doListServersCmd(sess *session.Session) (err error) {
 }
 
 func doServerProxyCmd(sess *session.Session) (err error) {
-  var s *mclib.Server
-  if s, err = mclib.GetServerFromName(serverNameArg, currentCluster, sess); err != nil {
-    return err
+
+  s, err := mclib.GetServerFromName(serverNameArg, currentCluster, sess)
+  if err != nil { return err }
+  p, err := mclib.GetProxyFromName(proxyNameArg, currentCluster, sess) 
+  if err != nil { return err }
+
+
+  if err = p.AddServerAccess(s); err != nil { return err }
+  sFQDN, ci, err := p.AttachToProxyNetwork(s)
+  if err != nil {
+    err = fmt.Errorf("Failed to update Server DNS to proxy: %s. However, Server access added to proxy.", err)
+    return  err
   }
 
-  var p *mclib.Proxy
-  if p, err = mclib.GetProxyFromName(proxyNameArg, currentCluster, sess); err != nil {
-    return err
+  err = p.StartProxyForServer(s)
+  if err == nil {
+    fmt.Printf("%sServer added to proxy. New DNS for %s%s\n", successColor, sFQDN, resetColor)
+    setAlertOnDnsChangeSync(ci, sess)
   }
-
-  if err = p.AddServer(s); err != nil { return err }
-  if err = p.ProxyForServer(s); err != nil { return err }
-
-  return nil
+  return err
 }
 
 func doServerUnProxyCmd(sess *session.Session) (err error) {
@@ -258,19 +265,55 @@ func doServerUnProxyCmd(sess *session.Session) (err error) {
   p, err := mclib.GetProxyFromName(proxyNameArg, currentCluster, sess)
   if err != nil { return err }
 
-  rerr := p.RemoveServer(s)
-  changeInfo, derr := p.DetachFromProxyNetwork(s)
 
-  switch {
-    case rerr != nil && derr != nil:
-      err = fmt.Errorf("Failed to remove server from proxy: %s. Failed to detach server from network: %s", rerr, derr)
-    case rerr != nil:
-      err = rerr
-    case derr != nil:
-      err = derr
-    default:
-      fmt.Printf("%sRemoved server %s from proxy %s%s\n", successColor, s.Name, p.Name, resetColor)
-      setAlertOnDnsChangeSync(changeInfo, sess)
+  successMessages := make([]string,0)
+  errorMessages := make([]string, 0)
+
+  changeInfo, derr := p.DetachFromProxyNetwork(s)
+  if derr == nil {
+    successMessages = append(successMessages, "DNS for server removed")
+  } else {
+    em := fmt.Sprintf("Failed to remove DNS for server: %s", derr)
+    errorMessages = append(errorMessages,em)
+  }
+
+  serr := p.StopProxyForServer(s)
+  if serr == nil {
+    successMessages = append(successMessages,"Proxy no longer acts as proxy for Server")
+  } else {
+    em := fmt.Sprintf("Failed to stop proxy for server: %s", serr)
+    errorMessages = append(errorMessages, em)
+  }
+
+  rerr := p.RemoveServerAccess(s)
+  if rerr == nil {
+    successMessages = append(successMessages,"Server access removed from Proxy")
+  } else {
+    em := fmt.Sprintf("Failed to remove server access from Proxy: %s", rerr)
+    errorMessages = append(errorMessages, em)
+  }
+
+
+  if derr != nil || serr != nil || rerr != nil {
+    var successMessage string
+    if len(successMessages) == 1 {
+      successMessage = successMessages[0]
+    } else { 
+      successMessage = strings.Join(successMessages, ", ")
+    }
+    var errorMessage string
+    if len(errorMessages) == 1 {
+      errorMessage = errorMessages[0]
+    } else { 
+      errorMessage = strings.Join(errorMessages, ", ")
+    }
+    err = fmt.Errorf("%s, but %s", errorMessage, successMessage)
+  } else {
+    fmt.Printf("%sRemoved server from proxy and DNS for server%s\n", successColor, resetColor)
+  }
+
+  if derr == nil {
+    setAlertOnDnsChangeSync(changeInfo, sess)
   }
 
   return err

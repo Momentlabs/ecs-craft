@@ -10,7 +10,7 @@ import(
 
   // "mclib"
   "github.com/jdrivas/mclib"
-
+  
   // "awslib"
   "github.com/jdrivas/awslib"
 )
@@ -57,6 +57,14 @@ func doAttachProxy(sess *session.Session) (error) {
 
   return err
 }
+
+// func doProxyRemoveServer(sess *session.Session) (error) {
+//   p, err := mclib.GetProxyFromName(proxyNameArg, sess)
+//   if err != nil { return err }
+
+//   p.RemoveServer()
+//   return err
+// }
 
 // TODO: Much of this needs to move to mclib.
 func doLaunchProxy(sess *session.Session) (error) {

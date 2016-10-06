@@ -64,6 +64,7 @@ var (
   proxyListCmd *kingpin.CmdClause
   proxyAttachCmd *kingpin.CmdClause
   proxyDNSCmd *kingpin.CmdClause
+  // proxyRemoveServerCmd *kingpin.CmdClause
 
   serverCmd *kingpin.CmdClause
   serverLaunchCmd *kingpin.CmdClause
@@ -167,11 +168,17 @@ func init() {
 
   proxyAttachCmd = proxyCmd.Command("attach", "Attach proxy to the network by hand.")
   proxyAttachCmd.Arg("proxy-name", "Name of the proxy you want to attach to the network.").Required().StringVar(&proxyNameArg)
-  proxyAttachCmd.Arg("clsuter", "The cluster where you'll find the proxy.").Action(setCurrent).StringVar(&clusterArg)
+  proxyAttachCmd.Arg("cluster", "The cluster where you'll find the proxy.").Action(setCurrent).StringVar(&clusterArg)
 
   proxyDNSCmd = proxyCmd.Command("dns", "List DNS records associated with this proxy.")
   proxyDNSCmd.Arg("proxy-name", "Name of the proxy.").Required().StringVar(&proxyNameArg)
-  proxyDNSCmd.Arg("clsuter", "The cluster where you'll find the proxy.").Action(setCurrent).StringVar(&clusterArg)
+  proxyDNSCmd.Arg("cluster", "The cluster where you'll find the proxy.").Action(setCurrent).StringVar(&clusterArg)
+
+  // proxyRemoveServerCmd = proxyCmd.Command("remove", "Removes the server-name from the proxies list of servers. DOES NOT manipulate dns or forced hosts. Normally use unproxy.")
+  // proxyRemoveServerCmd.Arg("proxy-name", "Name of the proxy.").Required().StringVar(&proxyNameArg)
+  // proxyRemoveServerCmd.Arg("server-name", "Name to use in server remove.").Required().StringVar(&serverNameArg)
+  // proxyRemoveServerCmd.Arg("cluster", "The cluster where you'll find the proxy.").Action(setCurrent).StringVar(&clusterArg)
+
 
   // Server commands
   serverCmd = app.Command("server","Context for minecraft server commands.")
@@ -261,6 +268,7 @@ func DoICommand(line string, sess *session.Session, ecsSvc *ecs.ECS, ec2Svc *ec2
       case proxyListCmd.FullCommand(): err = doListProxies(sess)
       case proxyAttachCmd.FullCommand(): err = doAttachProxy(sess)
       case proxyDNSCmd.FullCommand(): err = doListProxyDNS(sess)
+      // case proxyRemoveServerCmd.FullCommand(): err = doProxyRemoveServer(sess)
 
       // Cluster Commands
       case clusterListCmd.FullCommand(): err = doListClusters(sess)
