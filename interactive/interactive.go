@@ -298,7 +298,7 @@ func DoICommand(line string, sess *session.Session, ecsSvc *ecs.ECS, ec2Svc *ec2
       // case serverAttachCmd.FullCommand(): err = doServerAttachCmd(sess)
 
       // Snapshot commands
-      // case archiveListCmd.FullCommand(): err = doArchiveListCmd(sess)
+      case archiveListCmd.FullCommand(): err = doArchiveListCmd(sess)
     }
   }
   return err
