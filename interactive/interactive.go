@@ -130,6 +130,7 @@ func init() {
 
   // Basic housekeeping commands.
   debugCmd = app.Command("debug", "toggle debug.")
+  verbose = true
   verboseCmd = app.Command("verbose", "toggle verbose mode.")
   exit = app.Command("exit", "exit the program. <ctrl-D> works too.")
   quit = app.Command("quit", "exit the program.")
@@ -359,22 +360,25 @@ func toggleDebug() bool {
 }
 
 func configureLogs() {
-  if debug || verbose {
-    log.SetLevel(logrus.DebugLevel)
-    mclib.SetLogLevel(logrus.DebugLevel)
-    awslib.SetLogLevel(logrus.DebugLevel)
-  } else {
-    log.SetLevel(logrus.InfoLevel)
-    mclib.SetLogLevel(logrus.InfoLevel)
-    awslib.SetLogLevel(logrus.InfoLevel)
+  l := logrus.ErrorLevel
+  switch {
+  case debug:
+    l = logrus.DebugLevel
+  case verbose:
+    l = logrus.InfoLevel
+  default:
+    l = logrus.ErrorLevel
   }
+  log.SetLevel(l)
+  mclib.SetLogLevel(l)
+  awslib.SetLogLevel(l)
 }
 
 func setupLogs() {
   formatter := new(sl.TextFormatter)
   formatter.FullTimestamp = true
   log.SetFormatter(formatter)
-  log.SetLevel(logrus.InfoLevel)
+  configureLogs()
 }
 
 func doQuit(sess *session.Session) (error) {

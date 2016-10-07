@@ -99,12 +99,13 @@ func doRestartServerCmd(sess *session.Session) (err error) {
 
   // Get set up ....
   s, err  := mclib.GetServerFromName(serverName, cluster, sess)
-  if err != nil { return fmt.Errorf("Failed to get server. Server not restarted: %s", err) }
+  if err != nil { return fmt.Errorf("Failed to get server, server not restarted: %s", err) }
 
   if backup == "" {
-    return fmt.Errorf("Please specify a snapshot file until we get the code written to get the latest backup for the original server.")
-    // backup, err  := s.GetLatestWorldBackup()
-    // if err != nil { return fmt.Errorf("Failed to get most recent world backup. Server not restarted: %s", err) }
+    bs, err := s.GetLatestWorldSnapshot()
+    if err != nil { return fmt.Errorf("Failed to get latest world, server not restarted: %s", err)}
+    backup = bs.URI()
+    fmt.Printf("Using snapshot: %s.\n", backup)
   }
 
   p, err := mclib.GetProxyFromName(proxyName, cluster, sess)
@@ -139,18 +140,8 @@ func doRestartServerCmd(sess *session.Session) (err error) {
   if err != nil { 
     return fmt.Errorf("Failed to start new server." +
       "Server DNS is no longer pointing to proxy server. Server not restarted: %s", err) 
-  } else {
-    serverEnv := ss.ServerContainerEnv()
-    controllerEnv := ss.ControllerContainerEnv()
-    fmt.Printf("%sStarting new minecraft server with snapshot %s:%s\n", successColor, backup, resetColor)
-    w := tabwriter.NewWriter(os.Stdout, 4, 8, 8, ' ', 0)
-    fmt.Fprintf(w, "%sCluster\tUser\tName\tTask\tRegion\tBucket\tWorld%s\n", titleColor, resetColor)
-    fmt.Fprintf(w, "%s%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n.", nullColor,
-      currentCluster, serverEnv[mclib.ServerUserKey], serverEnv[mclib.ServerNameKey], tdArn, 
-      controllerEnv[mclib.ArchiveRegionKey], controllerEnv[mclib.ArchiveBucketKey], serverEnv["WORLD"],
-      resetColor)
-    w.Flush()
   }
+  fmt.Printf("%sStarting new minecraft server with snapshot %s:%s\n", successColor, backup, resetColor)
 
   // .... Unproxy old server ....
   successMessages := make([]string,0)
@@ -226,6 +217,16 @@ func doRestartServerCmd(sess *session.Session) (err error) {
   fmt.Printf("%sOld server sucesfullly terminated.%s\n", successColor, resetColor)
 
   fmt.Printf("%sServer Restarted.%s\n", successColor, resetColor)
+  serverEnv := ss.ServerContainerEnv()
+  controllerEnv := ss.ControllerContainerEnv()
+  w := tabwriter.NewWriter(os.Stdout, 4, 8, 8, ' ', 0)
+  fmt.Fprintf(w, "%sCluster\tUser\tName\tTask\tRegion\tBucket\tWorld%s\n", titleColor, resetColor)
+  fmt.Fprintf(w, "%s%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n", nullColor,
+    currentCluster, serverEnv[mclib.ServerUserKey], serverEnv[mclib.ServerNameKey], tdArn, 
+    controllerEnv[mclib.ArchiveRegionKey], controllerEnv[mclib.ArchiveBucketKey], serverEnv["WORLD"],
+    resetColor)
+  w.Flush()
+
   return err
 }
 
