@@ -135,6 +135,7 @@ func getProxyTaskDef() (td string) {
 // separate basic defaults, which can be leveraged into
 // the separate proxy and barse verions.
 // DRY
+// TODO: Move this to mclib.
 func getProxyTaskEnvironment(proxyName, region, bucketName string) awslib.ContainerEnvironmentMap {
 
   serverName := fmt.Sprintf("%s-hub-server", proxyName)

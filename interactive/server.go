@@ -13,8 +13,8 @@ import (
   //
   // Careful now ...
   //
-  // "mclib"
-  "github.com/jdrivas/mclib"
+  "mclib"
+  // "github.com/jdrivas/mclib"
   
   // "awslib"
   "github.com/jdrivas/awslib"
@@ -44,21 +44,15 @@ func doLaunchServerCmd(sess *session.Session) (error) {
   region := DefaultArchiveRegion
   bucketName := DefaultArchiveBucket
   tdArn := serverTaskArg
-  ss, err := mclib.NewServerSpec(userName, serverName, region, bucketName, tdArn, sess)
+  cluster := currentCluster
+
+  ss, err := mclib.NewServerSpec(userName, serverName, region, bucketName, cluster, tdArn, sess)
   if err != nil { return err }
-  serverEnv := ss.ServerContainerEnv()
-  contEnv := ss.ControllerContainerEnv()
 
-  fmt.Printf("%sLaunching new minecraft server:%s\n", successColor, resetColor)
-  w := tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
-  fmt.Fprintf(w, "%sCluster\tUser\tName\tTask\tRegion\tBucket%s\n", titleColor, resetColor)
-  fmt.Fprintf(w, "%s%s\t%s\t%s\t%s\t%s\t%s%s\n", nullColor,
-    currentCluster, serverEnv[mclib.ServerUserKey], contEnv[mclib.ServerNameKey], tdArn, 
-    contEnv[mclib.ArchiveRegionKey], contEnv[mclib.ArchiveBucketKey], resetColor)
-  w.Flush()
-
-  // Handling multiple tasks return is currently done in launchServer().
-  _, err = launchServer(tdArn, currentCluster, userName, ss, sess)
+  s, err := launchServer(ss, sess)
+  if err == nil {
+    displayServer(s)
+  }
   return err
 }
 
@@ -73,22 +67,40 @@ func doStartServerCmd(sess *session.Session) (err error) {
   cluster := currentCluster
 
   // startServer calls launchServer, which handles reporting on multiple tasks.
-  ss, _, err := startServer(userName, serverName, region, bucketName, snapshotName, tdArn, cluster,sess)
-
+  s, err := startServer(userName, serverName, region, bucketName, snapshotName, tdArn, cluster,sess)
   if err == nil {
-    serverEnv := ss.ServerContainerEnv()
-    controllerEnv := ss.ControllerContainerEnv()
-    fmt.Println("Starting minecraft server:")
-    w := tabwriter.NewWriter(os.Stdout, 4, 8, 8, ' ', 0)
-    fmt.Fprintf(w, "%sCluster\tUser\tName\tTask\tRegion\tBucket\tWorld%s\n", titleColor, resetColor)
-    fmt.Fprintf(w, "%s%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n.", nullColor,
-      currentCluster, serverEnv[mclib.ServerUserKey], serverEnv[mclib.ServerNameKey], tdArn, 
-      controllerEnv[mclib.ArchiveRegionKey], controllerEnv[mclib.ArchiveBucketKey], serverEnv["WORLD"],
-      resetColor)
-    w.Flush()
+    displayServer(s)
   }
   return err
 }
+
+// Used just as it's launched.
+func displayServer(s *mclib.Server) {
+  serverEnv, ok := s.ServerEnvironment()
+  if !ok { fmt.Printf("Failed to get Server environment.")}
+  contEnv, ok := s.ControllerEnvironment()
+  if !ok { fmt.Printf("Failed to get Controller environment.")}
+  fmt.Printf("%sLaunching new minecraft server:%s\n", successColor, resetColor)
+  w := tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
+  fmt.Fprintf(w, "%sCluster\tUser\tName\tTask\tRegion\tBucket%s\n", titleColor, resetColor)
+  fmt.Fprintf(w, "%s%s\t%s\t%s\t%s\t%s\t%s%s\n", nullColor,
+    s.ClusterName, serverEnv[mclib.ServerUserKey], contEnv[mclib.ServerNameKey], 
+    *s.DeepTask.TaskDefinition.TaskDefinitionArn, contEnv[mclib.ArchiveRegionKey], 
+    contEnv[mclib.ArchiveBucketKey], resetColor)
+  w.Flush()
+  if debug {
+    fmt.Printf("Server Environment:")
+    for k, v := range serverEnv {
+      fmt.Printf("[%s] = %s", k, v)
+    }
+    fmt.Printf("\nController Environment:\n")
+    for k, v := range contEnv {
+      fmt.Printf("[%s] = %s", k, v)
+    }
+    fmt.Printf("\n")
+  }
+}
+
 
 
 func doRestartServerCmd(sess *session.Session) (err error) {
@@ -97,7 +109,6 @@ func doRestartServerCmd(sess *session.Session) (err error) {
   cluster := currentCluster
   tdArn := serverTaskArg
   backup := snapshotNameArg
-
 
   // Get set up ....
   oServer, err  := mclib.GetServerFromName(serverName, cluster, sess)
@@ -111,7 +122,7 @@ func doRestartServerCmd(sess *session.Session) (err error) {
   }
 
   p, err := mclib.GetProxyFromName(proxyName, cluster, sess)
-  if err != nil { return fmt.Errorf("Failed to get proxy. Server not restarted: %s", err)}
+  if err != nil { return fmt.Errorf("Failed to get proxy. Server not restarted: %s", err) }
   // TODO: revist if we want to start a new server even if this is not proxied.
   proxyFound, err := p.IsServerProxied(oServer) 
   if !proxyFound || err != nil {
@@ -119,44 +130,23 @@ func doRestartServerCmd(sess *session.Session) (err error) {
     return fmt.Errorf("Failed to find proxy for server: %s", err)
   }
 
-
-  // .... Remove old server from proxy DNS ....
-  // For now this will be detach from proxy network.
-  // We could, and probably should, make it general (ie. Server.DetachFromNetwork(),
-  // for the moment we don't have a policy for the TLD part of a server DNS name other
-  // than in the case of proxying).
-  // TODO: Test this to  make sure there is no strange race condition:
-  // The following, deletes the DNS A record for s.DNSName() + "." + p.DNSName().
-  // Below when we attach to the proxy network, we update essentially the same record.
-  // It may make more sense to just leave the record alone. This is probably
-  // the better appraoch in case something fails down there and we really
-  // just want the server unavailable until we fix it, but ......
   changeInfo, err := p.DetachFromProxyNetwork(oServer)
   if err != nil { return fmt.Errorf("Failed to remove server from DNS. Server not restarted: %s", err) }
-  fmt.Printf("%sRemoved DNS for server %s: %s.%s\n", successColor, oServer.Name,  *changeInfo.Comment, resetColor)
+  fmt.Printf("%sRemoved DNS for server %s: %s.%s\n", 
+    successColor, oServer.Name,  *changeInfo.Comment, resetColor)
   setAlertOnDnsChangeSync(changeInfo, sess)
 
 
   // .... start new server from backup ....
-  ss, tasks, err := startServer(oServer.User, oServer.Name, *oServer.AWSSession.Config.Region, oServer.ArchiveBucket, backup, tdArn, cluster, sess)
-  if err != nil { 
-    return fmt.Errorf("Failed to start new server." +
-      "Server DNS is no longer pointing to proxy server. Server not restarted: %s", err) 
+  s, err := startServer(oServer.User, oServer.Name, *oServer.AWSSession.Config.Region, oServer.ArchiveBucket, backup, tdArn, cluster, sess)
+  if err != nil {
+    fmt.Printf("%sError starting server, server in unknown state, DNS for old server removed: %#v", err)
+    return err
   }
   fmt.Printf("%sStarting new minecraft server with snapshot %s:%s\n", successColor, backup, resetColor)
 
-  if len(tasks) != 1 {
-    if debug {
-      fmt.Printf("Got to many tasks (%d):", len(tasks))
-      for i, t := range tasks {
-        fmt.Printf("%d. %#v", i+1, *t)
-      }
-    }
-    return fmt.Errorf("Unexpected tasks: Server launch retruned with more than one craeted task (%d)", len(tasks))
-  }
-
   fmt.Printf("Waiting for new server to become available.")
-  nServer, err := mclib.GetServerWait(cluster, *tasks[0].TaskArn, sess)
+  nServer, err := mclib.GetServerWait(cluster, *s.TaskArn, sess)
   if err != nil {
     return fmt.Errorf("Failed to get a Server Object from server task: %s. New server launced old server still in place, but no DNS.", err)
   }
@@ -164,7 +154,6 @@ func doRestartServerCmd(sess *session.Session) (err error) {
   // .... Unproxy old server ....
   successMessages := make([]string,0)
   errorMessages := make([]string, 0)
-
   serr := p.StopProxyForServer(oServer)
   if serr == nil {
     successMessages = append(successMessages,"Proxy no longer acts as proxy for Server")
@@ -203,15 +192,6 @@ func doRestartServerCmd(sess *session.Session) (err error) {
     fmt.Printf("%sSwitch old server to new server on Proxy.%s\n", successColor, resetColor)
   }
 
-
-  // // .... attach new server to proxy .....
-  // err = p.AddServerAccess(s) 
-  // if err != nil { 
-  //   return fmt.Errorf("Failed to add new server (%s) access to proxy (%s): %s\n" + 
-  //     "Old server has not been killed but as no DNS record, and is not available in proxy.",
-  //     s.Name, p.Name, err)
-  // }
-  // fmt.Printf("%sProxy has access to new server.\n%s", successColor, resetColor)
   sFQDN, ci, err := p.AttachToProxyNetwork(nServer)
   if err != nil {
     err = fmt.Errorf("Failed to update New Server DNS to proxy: %s. However, Server access added to proxy and proxy will forward.", err)
@@ -235,8 +215,10 @@ func doRestartServerCmd(sess *session.Session) (err error) {
   fmt.Printf("%sOld server sucesfullly terminated.%s\n", successColor, resetColor)
 
   fmt.Printf("%sServer Restarted.%s\n", successColor, resetColor)
-  serverEnv := ss.ServerContainerEnv()
-  controllerEnv := ss.ControllerContainerEnv()
+  serverEnv, ok  := s.ServerEnvironment()
+  if !ok { fmt.Printf("Failed to get the server Environment.") }
+  controllerEnv, ok := s.ControllerEnvironment()
+  if !ok { fmt.Printf("Failed to get the controller Environment.") }
   w := tabwriter.NewWriter(os.Stdout, 4, 8, 8, ' ', 0)
   fmt.Fprintf(w, "%sCluster\tUser\tName\tTask\tRegion\tBucket\tWorld%s\n", titleColor, resetColor)
   fmt.Fprintf(w, "%s%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n", nullColor,
@@ -249,83 +231,53 @@ func doRestartServerCmd(sess *session.Session) (err error) {
 }
 
 
+
 // Set up the environment to start the server from a snapshot.
 func startServer(un, sn, region, bn, snapshotName, tdArn, clusterName string, 
-  sess *session.Session) (ss mclib.ServerSpec, tasks []*ecs.Task, err error) {
+  sess *session.Session) (s *mclib.Server, err error) {
 
-  ss, err = mclib.NewServerSpec(un, sn, region, bn, tdArn, sess)
-  if err != nil { return ss, tasks, err }
+  ss, err := mclib.NewServerSpec(un, sn, region, bn, clusterName, tdArn, sess)
+  if err != nil { return s, err }
 
   serverEnv := ss.ServerContainerEnv()
   serverEnv[mclib.WorldKey] = snapshotName
-  tasks, err = launchServer(tdArn, clusterName, un, ss, sess)
-  return ss, tasks, err
+  s, err = launchServer(ss, sess)
+  return s, err
 }
 
 
-// TODO: Figure out if this is an issue: don't launch a server if there is already one with the same user and server names.
-// TODO: We need to be able to attach a server, on launch, to a running proxy.
-// I expect that what we'll do is add an ENV variable to the controller (and might
-// as well add it to the server too), pointing somehow to the proxy. Perhaps simply 
-// Server/RconPort is enough.
-// The controller can then be configured to add the server to the proxy on connection.
-// Let's consider a ROLE env variable. 
-// TODO: This needs to be foled into mclib. 
-// we should be headed toward someting like:
-// var s *mclib.Server = mclib.LaunchServer(cluster, userName, serverName, env. sess)
-// or mclib.LaunchServerWithTaskDefinition(ss,sess)
-// Which might just become ss.LaunchServer()
-// and ss.LaunchServerWithWorld(worldName)
-func launchServer(tdArn, clusterName, userName string, ss mclib.ServerSpec, 
-  sess *session.Session) (tasks []*ecs.Task, err error) {
+// TODO: Figure out if this is an issue: don't launch a server if there is already 
+// one with the same user and server names. Probably only really matters in the case
+// of proxing. That said, shouldn't we just prevent this?
+func launchServer(ss mclib.ServerSpec, sess *session.Session) (s *mclib.Server, err error) {
 
-  // serverEnv := ss.ServerContainerEnv()
-  controlEnv := ss.ControllerContainerEnv()
-  if controlEnv[mclib.ArchiveBucketKey] == "" {
-    controlEnv[mclib.ArchiveBucketKey] = DefaultArchiveBucket
-  }
-  if verbose  || debug {
-    fmt.Printf("Making server with container environments: %#v\n", ss.ServerTaskEnv)
-  }
-
-  env, err := ss.ContainerEnvironmentMap()
-  if err != nil { return tasks, err }
-
-  resp, err := awslib.RunTaskWithEnv(clusterName, tdArn, env, sess)
   startTime := time.Now()
-  tasks = resp.Tasks
-  failures := resp.Failures
-  if err == nil {
-    // newUser := serverEnv[mclib.ServerUserKey]
-    // serverName := serverEnv[mclib.ServerNameKey]
-    // fmt.Printf("%s launched %s for %s\n", startTime.Local().Format(time.RFC1123), serverName, newUser)
-    if len(tasks) == 1  {
-      waitForTaskArn := *tasks[0].TaskArn
-      awslib.OnTaskRunning(clusterName, waitForTaskArn, sess, func(taskDescrip *ecs.DescribeTasksOutput, err error) {
-        if err == nil {
-          s, err  := mclib.GetServer(clusterName, waitForTaskArn, sess)
-          if err == nil {
-            fmt.Printf("\n%s%s for %s %s:%d is now running (%s). %s\n",
-             successColor, s.Name, s.User, s.PublicServerIp, s.ServerPort, time.Since(startTime), resetColor)
-          } else {
-            fmt.Printf("\n%sServer is now running for user %s on %s. (%s).%s\n",
-             successColor, userName, clusterName, time.Since(startTime), resetColor)
-          }
-        } else {
-          fmt.Printf("\n%sErrr on waiting for server to start running: %s%s\n", 
-            failColor, err, resetColor)
-        }
-      })
-    } else if len(tasks) > 1 {
-      fmt.Printf("%sGot more tasks in response to the launch than expected.%s\n", warnColor, resetColor)
-      printTaskList(tasks)
-      fmt.Printf("%sNo more updates forthcomming.%s\n", warnColor, resetColor)
-    }
-    if len(failures) > 0 {
-      printECSFailures(clusterName, failures)
-    }
+  s, err = ss.LaunchServer()
+  if err != nil { 
+    fmt.Printf("%sFail in launch server. %#v%s", failColor, err, resetColor)
+    return s, err 
   }
-  return tasks, err
+
+  if err == nil {
+    awslib.OnTaskRunning(s.ClusterName, *s.TaskArn, sess, func(taskDescrip *ecs.DescribeTasksOutput, err error) {
+      if err == nil {
+        // go get the most recent data.
+        ns, err  := mclib.GetServer(s.ClusterName, *s.TaskArn, sess)
+        if err == nil {
+          fmt.Printf("\n%s%s for %s %s:%d is now running (%s) on cluster: %s. %s\n",
+           successColor, ns.Name, ns.User, ns.PublicServerIp, ns.ServerPort, time.Since(startTime), ns.ClusterName, resetColor)
+        } else {
+          fmt.Printf("\n%sServer is now running for user %s on %s. (%s).%s\n",
+           successColor, s.Name, s.ClusterName, time.Since(startTime), resetColor)
+        }
+      } else {
+        fmt.Printf("\n%sErrr on waiting for server to start running: %s%s\n", 
+          failColor, err, resetColor)
+      }
+    })
+  }
+
+  return s, err
 }
 
 // TODO: This should get moved to mclib.
@@ -486,7 +438,6 @@ func doServerUnProxyCmd(sess *session.Session) (err error) {
 
 
 func doDescribeAllServersCmd(sess *session.Session) (error) {
-  // TODO: This assumes that all tasks in a cluster a minecraft servers.
   dtm, err := awslib.GetDeepTasks(currentCluster, sess)
   if err != nil {return err}
 
