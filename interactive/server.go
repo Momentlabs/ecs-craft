@@ -103,6 +103,8 @@ func displayServer(s *mclib.Server) {
 
 
 
+// defaults to restarting a server with state from a world backup as oposed to full server backup.
+// TODO: Revist starting from full server vs. world (especially the ops etc.)
 func doRestartServerCmd(sess *session.Session) (err error) {
   serverName := serverNameArg
   proxyName := proxyNameArg
@@ -112,14 +114,7 @@ func doRestartServerCmd(sess *session.Session) (err error) {
 
   // Get set up ....
   oServer, err  := mclib.GetServerFromName(serverName, cluster, sess)
-  if err != nil { return fmt.Errorf("Failed to get server, server not restarted: %s", err) }
-
-  if backup == "" {
-    bs, err := oServer.GetLatestWorldSnapshot()
-    if err != nil { return fmt.Errorf("Failed to get latest world, server not restarted: %s", err)}
-    backup = bs.URI()
-    fmt.Printf("Using snapshot: %s.\n", backup)
-  }
+  if err != nil { return fmt.Errorf("Failed to get current server, server not restarted: %s", err) }
 
   p, err := mclib.GetProxyFromName(proxyName, cluster, sess)
   if err != nil { return fmt.Errorf("Failed to get proxy. Server not restarted: %s", err) }
@@ -130,26 +125,34 @@ func doRestartServerCmd(sess *session.Session) (err error) {
     return fmt.Errorf("Failed to find proxy for server: %s", err)
   }
 
-  changeInfo, err := p.DetachFromProxyNetwork(oServer)
-  if err != nil { return fmt.Errorf("Failed to remove server from DNS. Server not restarted: %s", err) }
-  fmt.Printf("%sRemoved DNS for server %s: %s.%s\n", 
-    successColor, oServer.Name,  *changeInfo.Comment, resetColor)
-  setAlertOnDnsChangeSync(changeInfo, sess)
-
+  if backup == "" {
+    bu, err  := oServer.GetLatestWorldSnapshot()
+    if err != nil { return fmt.Errorf("Failed to get snapshot to start the server. Server not restarted: %s", err) }
+    backup = bu.URI()
+  }
 
   // .... start new server from backup ....
   s, err := startServer(oServer.User, oServer.Name, *oServer.AWSSession.Config.Region, oServer.ArchiveBucket, backup, tdArn, cluster, sess)
   if err != nil {
-    fmt.Printf("%sError starting server, server in unknown state, DNS for old server removed: %#v", err)
+    fmt.Printf("%sError starting server, new server in unknown state. Server not restarted: %#v", err)
     return err
   }
   fmt.Printf("%sStarting new minecraft server with snapshot %s:%s\n", successColor, backup, resetColor)
 
-  fmt.Printf("Waiting for new server to become available.")
+  fmt.Printf("%sWaiting for new server to become available.%s\n", warnColor, resetColor)
   nServer, err := mclib.GetServerWait(cluster, *s.TaskArn, sess)
   if err != nil {
-    return fmt.Errorf("Failed to get a Server Object from server task: %s. New server launced old server still in place, but no DNS.", err)
+    return fmt.Errorf("Failed on waiting for new server to come up: %s. Server not restarted.", err)
   }
+  fmt.Printf("%sNew serrver up.%s\n", successColor, resetColor)
+
+  // Remove old server DNS.
+  changeInfo, err := p.DetachFromProxyNetwork(oServer)
+  if err != nil { return fmt.Errorf("Failed to remove server from DNS. New server up and old server not restarted: %s", err) }
+  fmt.Printf("%sRemoved DNS for server %s: %s.%s\n", 
+    successColor, oServer.Name,  *changeInfo.Comment, resetColor)
+  setAlertOnDnsChangeSync(changeInfo, sess)
+
 
   // .... Unproxy old server ....
   successMessages := make([]string,0)
@@ -189,7 +192,7 @@ func doRestartServerCmd(sess *session.Session) (err error) {
       errorMessage, successMessage, oServer.Name)
     return fmt.Errorf(em)
   } else {
-    fmt.Printf("%sSwitch old server to new server on Proxy.%s\n", successColor, resetColor)
+    fmt.Printf("%sSwitched old server to new server on Proxy.%s\n", successColor, resetColor)
   }
 
   sFQDN, ci, err := p.AttachToProxyNetwork(nServer)
@@ -207,10 +210,10 @@ func doRestartServerCmd(sess *session.Session) (err error) {
   fmt.Printf("%sProxy will now forward connections for server.%s\n", successColor, resetColor )
 
 
-  // .... kill old server task.
+  // Kill old server task.
   _, err = awslib.StopTask(cluster, *oServer.TaskArn, sess)
   if err != nil {
-    err = fmt.Errorf("Failed to stop original serer task. Everything else seemed to work: %s", err)
+    err = fmt.Errorf("Failed to stop original server task. Everything else seemed to work: %s", err)
   }
   fmt.Printf("%sOld server sucesfullly terminated.%s\n", successColor, resetColor)
 
