@@ -3,12 +3,13 @@ package interactive
 import (
   "fmt"
   "os"
+  "sort"
   "strings"
   "text/tabwriter"
   "time"
   "github.com/aws/aws-sdk-go/aws/session"
   "github.com/aws/aws-sdk-go/service/ecs"
-  "github.com/aws/aws-sdk-go/service/ec2"
+  // "github.com/aws/aws-sdk-go/service/ec2"
 
   //
   // Careful now ...
@@ -305,16 +306,19 @@ func doTerminateServerCmd(sess *session.Session) (error) {
     }
     if len(tasks) == 1 {
       task := tasks[0]
-      fmt.Printf("%sStopped task %s at %s\n%s", successColor, awslib.ShortArnString(task.TaskArn), task.StoppedAt.Local(), resetColor)
+      fmt.Printf("%sStopped task %s at %s\n%s", successColor, 
+        awslib.ShortArnString(task.TaskArn), task.StoppedAt.Local(), resetColor)
       if len(task.Containers) > 1 {
         fmt.Printf("There were (%d) conatiners associated with this task.\n", len(task.Containers))
       }
       for i, container := range task.Containers {
-        fmt.Printf("%d. Stopped container %s, originally started: %s (%s)\n", i+1, *container.Name, task.StartedAt.Local(), time.Since(*task.StartedAt))
+        fmt.Printf("%d. Stopped container %s, originally started: %s (%s)\n", i+1, 
+          *container.Name, task.StartedAt.Local(), time.Since(*task.StartedAt))
       }
     } else {
       for i, task := range tasks {
-        fmt.Printf("%i. Stopped task %s at %s. Started at: %s (%s)\n", i+1, awslib.ShortArnString(task.TaskArn), task.StoppedAt.Local(), task.StartedAt.Local(), time.Since(*task.StartedAt))
+        fmt.Printf("%i. Stopped task %s at %s. Started at: %s (%s)\n", i+1, 
+          awslib.ShortArnString(task.TaskArn), task.StoppedAt.Local(), task.StartedAt.Local(), time.Since(*task.StartedAt))
       }
     }
     if len(failures) > 0 {
@@ -337,7 +341,7 @@ func doListServersCmd(sess *session.Session) (err error) {
   fmt.Printf("%s%s servers on %s%s\n", titleColor, 
     time.Now().Local().Format(time.RFC1123), currentCluster, resetColor)
   w := tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
-  fmt.Fprintf(w, "%sUser\tServer\tType\tAddress\tRcon\tServer\tControl\tUptime\tArn%s\n", titleColor, resetColor)
+  fmt.Fprintf(w, "%sUser\tServer\tType\tAddress\tRcon\tServer\tControl\tUptime\tTTS%s\n", titleColor, resetColor)
   if len(servers) == 0 {
     fmt.Fprintf(w,"%s\tNO SERVERS FOUND ON THIS CLUSTER%s\n", titleColor, resetColor)
     w.Flush()
@@ -346,7 +350,7 @@ func doListServersCmd(sess *session.Session) (err error) {
     for _, s := range servers {
       fmt.Fprintf(w, "%s%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n", nullColor,
         s.User, s.Name, s.CraftType(), s.PublicServerAddress(), s.RconAddress(), s.ServerContainerStatus(), 
-        s.ControllerContainerStatus(), s.UptimeString(), awslib.ShortArnString(s.TaskArn), 
+        s.ControllerContainerStatus(), s.UptimeString(), s.DeepTask.TimeToStartString(), 
         resetColor)
     }
   }
@@ -355,13 +359,273 @@ func doListServersCmd(sess *session.Session) (err error) {
   return err
 }
 
+func doDescribeServerCmd(serverName, clusterName string, sess *session.Session) (error) {
+
+  s, err := mclib.GetServerFromName(serverName, clusterName, sess)
+  if err != nil { return err }
+
+  pl, _, err := mclib.GetProxies(clusterName, sess)
+  if err != nil { return err }
+
+  var p *mclib.Proxy
+  for _, pt := range pl {
+    isProxy, err := pt.IsServerProxied(s)
+    if err != nil { 
+      isProxy = false
+      fmt.Printf("Error looking for server proxy: %s/%s", pt.Name, s.Name)
+    }
+    if isProxy {
+      p = pt
+      break;
+    }
+  }
+
+  fqdn := "<not-available>"
+  ipAddress := "<not-available>"
+  if p != nil {
+    dn, err := p.ProxiedServerFQDN(s)
+    if err == nil {
+      fqdn = dn
+      ipAddress = p.PublicIpAddress()
+    }
+  }
+
+  dt := s.DeepTask
+
+  // Overview stats on server.
+  fmt.Printf("%s%s: %s on %s%s\n", titleColor, time.Now().Local().Format(time.RFC1123), s.Name, currentCluster, resetColor)
+  w := tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
+  fmt.Fprintf(w, "%sUser\tServer\tType\tDNS\tIP\tServer\tControl\tUptime\tTTS%s\n", titleColor, resetColor)
+  fmt.Fprintf(w, "%s%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n", nullColor, 
+    s.User, s.Name, s.CraftType(), fqdn, ipAddress, s.ServerContainerStatus(), s.ControllerContainerStatus(), 
+    s.UptimeString(), dt.TimeToStartString(), resetColor)
+  w.Flush()
+
+  // Task details
+  fmt.Printf("\n%sTask%s\n", titleColor, resetColor)
+  w = tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
+  fmt.Fprintf(w, "%sTaskDefinintion\tARN\tInstnanceID\tTaskRole\tublicIP\tPrivateIP\tNetwork Mode\tStatus%s\n", titleColor, resetColor) 
+  roleArn := "<none>"
+  if dt.TaskDefinition.TaskRoleArn != nil { roleArn = *dt.TaskDefinition.TaskRoleArn }
+  fmt.Fprintf(w,"%s%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n", nullColor,
+    awslib.ShortArnString(dt.TaskDefinition.TaskDefinitionArn), awslib.ShortArnString(s.TaskArn), *dt.GetInstanceID(), roleArn, dt.PublicIpAddress(), dt.PrivateIpAddress(), 
+    *dt.TaskDefinition.NetworkMode, dt.LastStatus(), resetColor)
+  w.Flush()
+
+  // Volumes
+  fmt.Printf("%s\nVolumes%s\n", titleColor, resetColor)
+  if len(dt.TaskDefinition.Volumes) > 0 {
+    w = tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
+    fmt.Fprintf(w, "%sName\tHost Source Path%s\n", titleColor, resetColor)
+    for _, v := range dt.TaskDefinition.Volumes {
+      fmt.Fprintf(w,"%s%s\t%s%s\n", nullColor, *v.Name, *v.Host.SourcePath, resetColor)
+    }
+  } else {
+    fmt.Printf("No volumes specified.\n")
+  }
+  w.Flush()
+
+  //
+  // Containers
+  //
+
+  // Basic status
+  envs := make(map[string]map[string]string)
+  fmt.Printf("\n%sContainers%s\n", titleColor, resetColor)
+  w = tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
+  fmt.Fprintf(w, "%sName\tRole\tEssential\tPrivelaged\tStatus\tReason%s\n", titleColor, resetColor)
+  for _, c := range dt.Task.Containers {
+    env, ok := dt.GetEnvironment(*c.Name)
+    role := "<not-available>"
+    if ok {
+      envs[*c.Name] = env
+      if r, ok := env[mclib.RoleKey]; ok {
+        role = r
+      }
+    }
+    reason := "<not-available>"
+    cdef, ok := awslib.GetContainerDefinition(*c.Name, dt.TaskDefinition)
+    var priv bool
+    if cdef.Privileged != nil { priv = *cdef.Privileged }
+    if c.Reason != nil { reason = *c.Reason }
+    fmt.Fprintf(w, "%s%s\t%s\t%t\t%t\t%s\t%s\t%s\n", nullColor, *c.Name, role, *cdef.Essential, priv,
+      *c.LastStatus, reason, resetColor)
+  }
+  w.Flush()
+
+  // Configuration for running.
+  w = tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
+  fmt.Fprintf(w, "\n%sName\tImage\tEntpryPoint\tCommand%s\n", titleColor, resetColor)
+  for _, c := range dt.Task.Containers {
+    cdef, _ := awslib.GetContainerDefinition(*c.Name, dt.TaskDefinition)
+    fmt.Fprintf(w,"%s%s\t%s\t%s\t%s%s\n", nullColor, *c.Name, *cdef.Image, 
+      awslib.JoinStringP(cdef.EntryPoint, ", "), awslib.JoinStringP(cdef.Command, ", "), resetColor)
+  }
+  w.Flush()
+
+
+  w = tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
+  fmt.Fprintf(w, "\n%sName\tUser\tWorkingDir\tLog\tLog Options%s\n", titleColor, resetColor)
+  for _, c := range dt.Task.Containers {
+    cdef, _ := awslib.GetContainerDefinition(*c.Name, dt.TaskDefinition)
+    workingDirectory := "<none>"
+    if cdef.WorkingDirectory != nil { workingDirectory = *cdef.WorkingDirectory }
+    logDriver := "<none>"
+    if cdef.LogConfiguration != nil && cdef.LogConfiguration.LogDriver != nil { logDriver = *cdef.LogConfiguration.LogDriver }
+    user := "<none>"
+    if cdef.User != nil { user = *cdef.User }
+    options := make(optionMap, 0)
+    if cdef.LogConfiguration != nil { options = cdef.LogConfiguration.Options }
+    fmt.Fprintf(w,"%s%s\t%s\t%s\t%s\t%s%s\n", nullColor,
+      *c.Name, user,  workingDirectory, logDriver, options, resetColor)
+  }
+  w.Flush()
+
+  // Mounts 
+  fmt.Printf("\n%sMount Points:%s\n", titleColor, resetColor)
+  var anyMounts bool
+  for _, c := range dt.Task.Containers {
+    cdef, _ := awslib.GetContainerDefinition(*c.Name, dt.TaskDefinition)
+    if len(cdef.MountPoints) > 0 {
+      anyMounts = true
+      w = tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
+      fmt.Fprintf(w, "%sContainer\tSource\tContainer\tReadonly%s\n", titleColor, resetColor)
+      for _, mp := range cdef.MountPoints {
+        fmt.Fprintf(w,"%s%s\t%s\t%s\t%t%s\n", nullColor, *c.Name, *mp.SourceVolume, *mp.ContainerPath, *mp.ReadOnly, resetColor)
+      }
+    } 
+  }
+  w.Flush()
+  if !anyMounts {
+    fmt.Printf("No mount points specified.\n")
+  }
+
+  // Resource Controls
+  fmt.Printf("\n%sResource Controls:%s\n", titleColor, resetColor)
+  w = tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
+  fmt.Fprintf(w, "%sContainer\tCPU\tMemory Limit\tMemory Reservation%s\n", titleColor, resetColor)
+  for _, c := range dt.Task.Containers {
+    cdef, _ := awslib.GetContainerDefinition(*c.Name, dt.TaskDefinition)
+    fmt.Fprintf(w,"%s%s\t%d\t%d\t%d%s\n", nullColor, *c.Name, *cdef.Cpu, *cdef.Memory, *cdef.MemoryReservation, resetColor)
+  }
+  w.Flush()
+
+  fmt.Printf("%s\nUlimits:%s\n", titleColor, resetColor)
+  w = tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
+  fmt.Fprintf(w, "%sContainer\tName\tSoft Limit\tHard Limit%s\n", titleColor, resetColor)
+  var anyLimits bool
+  for _, c := range dt.Task.Containers {
+    cdef, _ := awslib.GetContainerDefinition(*c.Name, dt.TaskDefinition)
+    if len(cdef.Ulimits) > 0 {
+      anyLimits = true
+      for _, ul := range cdef.Ulimits {
+        fmt.Fprintf(w,"%s%s\t%s\t%d\t%d%s\n", nullColor, *c.Name, *ul.Name, *ul.SoftLimit, *ul.HardLimit, resetColor)
+      }
+    }
+  }
+  w.Flush()
+  if !anyLimits { fmt.Printf("No ulimits specified.\n")}
+
+
+  //  Network Bindings
+  fmt.Printf("\n%sNetwork Bindings:%s\n", titleColor, resetColor)
+  w = tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
+  fmt.Fprintf(w, "%sContainer\tIP\tContainer\tHost\tProtocol%s\n", titleColor, resetColor)
+  for _, c := range dt.Task.Containers {
+    for _, b := range c.NetworkBindings {
+      fmt.Fprintf(w,"%s%s\t%s\t%d\t%d\t%s%s\n", nullColor, *c.Name, *b.BindIP, 
+        *b.ContainerPort, *b.HostPort, *b.Protocol, resetColor)
+    }
+  }
+  w.Flush()
+
+  // Links
+  fmt.Printf("\n%sLinks:%s\n", titleColor, resetColor)
+  w = tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
+  fmt.Fprintf(w, "%sContainer\tLink%s\n", titleColor, 
+    resetColor)
+  for _, c := range dt.Task.Containers {
+    cdef, _ := awslib.GetContainerDefinition(*c.Name, dt.TaskDefinition)
+    for _, l := range cdef.Links {
+      fmt.Fprintf(w, "%s%s\t%s%s\n", nullColor, *c.Name, *l, resetColor)
+    }
+  }
+  w.Flush()
+
+
+  // Environments
+  tel := mergeEnvs(envs)
+  sort.Sort(ByKeyGroupedByContainer(tel))
+  fmt.Printf("%s\nConatiner Environments:%s\n", titleColor, resetColor)
+  w = tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
+  fmt.Fprintf(w, "%sContainer\tKey\tValue%s\n", titleColor, resetColor)
+  for _, te := range tel {
+    fmt.Fprintf(w, "%s%s\t%s\t%s%s\n", nullColor, te.Container, te.Key, te.Value, resetColor)
+  }
+  w.Flush()
+
+  // Per instance metrics
+  return err
+}
+
+type taskEnvEntry struct {
+  Container string
+  Key string
+  Value string
+}
+
+type taskEnvSort struct {
+  list []*taskEnvEntry
+  less func(tI, tJ *taskEnvEntry) (bool)
+}
+
+func (t taskEnvSort) Swap(i, j int) { t.list[i], t.list[j] = t.list[j], t.list[i] }
+func (t taskEnvSort) Len() int { return  len(t.list) }
+func (t taskEnvSort) Less(i, j int) bool { return t.less(t.list[i], t.list[j]) }
+
+func ByKeyGroupedByContainer(tl []*taskEnvEntry) (taskEnvSort) {
+  return taskEnvSort {
+    list: tl,
+    less: func(tI, tJ *taskEnvEntry) bool {
+      if tI.Key == tJ.Key {
+        return tI.Container < tJ.Container
+      }
+      return tI.Key < tJ.Key
+    },
+  }
+}
+
+func mergeEnvs(envs map[string]map[string]string) (el []*taskEnvEntry) {
+  el = make([]*taskEnvEntry,0)
+  for cName, env := range envs {
+    for k, v := range env {
+      tee := new(taskEnvEntry)
+      tee.Container = cName
+      tee.Key = k
+      tee.Value = v
+      el = append(el, tee)
+    }
+  }
+  return el
+}
+
+// Found in ContainerDefinition for the log options.
+// Though, this looks like something you miight see throughout aws.
+type optionMap map[string]*string
+func (om optionMap) String() (s string) {
+  for k, v := range om {
+    s += fmt.Sprintf("%s: %s, ", k, *v)
+  }
+  s = strings.TrimSuffix(s,", ")
+  return s
+}
+
 func doServerProxyCmd(sess *session.Session) (err error) {
 
   s, err := mclib.GetServerFromName(serverNameArg, currentCluster, sess)
   if err != nil { return err }
   p, err := mclib.GetProxyFromName(proxyNameArg, currentCluster, sess) 
   if err != nil { return err }
-
 
   if err = p.AddServerAccess(s); err != nil { return err }
   sFQDN, ci, err := p.AttachToProxyNetwork(s)
@@ -437,111 +701,5 @@ func doServerUnProxyCmd(sess *session.Session) (err error) {
   }
 
   return err
-}
-
-
-func doDescribeAllServersCmd(sess *session.Session) (error) {
-  dtm, err := awslib.GetDeepTasks(currentCluster, sess)
-  if err != nil {return err}
-
-  taskCount := 0
-  for _, dtask := range dtm {
-    taskCount++
-    task := dtask.Task
-    ec2Inst := dtask.EC2Instance
-    containers := task.Containers
-    if task != nil && ec2Inst != nil {
-      fmt.Printf("=========================\n")
-      fmt.Printf("%s", longDeepTaskString(task, ec2Inst))
-      if len(containers) > 1 {
-        fmt.Printf("There were (%d) containers associated with this task.\n", len(containers))
-      }
-      coMap := makeContainerOverrideMap(task.Overrides)
-      for i, container := range containers {
-        fmt.Printf("* %d. Container Name: %s\n", i+1, *container.Name)
-        fmt.Printf("Network Bindings:\n%s", networkBindingsString(container.NetworkBindings))
-        fmt.Printf("%s\n", overrideString(coMap[*container.Name], 3))
-      }
-
-    }
-    if dtask.Failure != nil {
-      fmt.Printf("Task failure - Reason: %s, Resource ARN: %s\n", *dtask.Failure.Reason, *dtask.Failure.Arn)
-    }
-    if dtask.CIFailure != nil {
-      fmt.Printf("ContainerInstance failure - Reason: %s, Resource ARN: %s\n", *dtask.CIFailure.Reason, *dtask.CIFailure.Arn)
-    }
-  }
-
-  return nil
-}
-
-func longDeepTaskString(task *ecs.Task, ec2Inst *ec2.Instance) (s string) {
-      fmt.Printf("Task Definition: %s\n", awslib.ShortArnString(task.TaskDefinitionArn))
-      fmt.Printf("Instance IP: %s\n", *ec2Inst.PublicIpAddress)
-      fmt.Printf("Instance ID: %s\n", *ec2Inst.InstanceId)
-      fmt.Printf("Instance Type: %s\n", *ec2Inst.InstanceType)
-      fmt.Printf("Location: %s\n", *ec2Inst.Placement.AvailabilityZone)
-      fmt.Printf("Public DNS: %s\n", *ec2Inst.PublicDnsName)
-      fmt.Printf("Started: %s (%s)\n", task.StartedAt.Local(), awslib.ShortDurationString(time.Since(*task.StartedAt)))
-      fmt.Printf("Status: %s\n", *task.LastStatus)
-      fmt.Printf("Task: %s\n", *task.TaskArn)
-      fmt.Printf("Task Definition: %s\n", *task.TaskDefinitionArn)
-      return s
-}
-
-func bindingShortString(bind *ecs.NetworkBinding) (s string) {
-  s += fmt.Sprintf("%s container %d => host %d (%s)",*bind.BindIP, *bind.ContainerPort, *bind.HostPort, *bind.Protocol)
-  return s
-}
-
-func failureShortString(failure *ecs.Failure) (s string){
-  s += fmt.Sprintf("%s - %s", *failure.Arn, *failure.Reason)
-  return s
-}
-
-func networkBindingsString(bindings []*ecs.NetworkBinding) (s string) {
-  for i, b := range bindings {
-    s += fmt.Sprintf("\t%d  %s\n", i+1, bindingShortString(b))
-  }
-  return s
-}
-
-
-// Overrides by container.
-type ContainerOverrideMap map[string]*ecs.ContainerOverride
-
-func makeContainerOverrideMap(to *ecs.TaskOverride) (ContainerOverrideMap) { 
-  coMap := make(ContainerOverrideMap)
-  for _, co := range to.ContainerOverrides {
-    coMap[*co.Name] = co
-  }
-  return coMap
-}
-
-func overrideString(co *ecs.ContainerOverride, perLine int) (s string) {
-  if perLine == 0 {perLine = 1}
-  command := "<EMPTY>"
-  if co.Command != nil {command = commandString(co.Command)}
-  s += fmt.Sprintf("Command: %s\n", command)
-  s += fmt.Sprintf("Environment: ")
-  for i, kvp := range co.Environment {
-    s += fmt.Sprintf("%s = %s", *kvp.Name, *kvp.Value)
-    if len(co.Environment) != i+1 { s += ", " }
-    if (i+1)%perLine == 0 {s += "\n"}
-  }
-
-  return s
-}
-
-func commandString(c []*string) (s string) {
-  for _, com := range c {
-    s+= *com + " "
-  }
-  return s
-}
-
-func doDescribeServerCmd() (error) {
-  fmt.Printf("Describe server for user \"%s\" in cluster \"%s\".\n", userNameArg, currentCluster)
-  return nil
 }
 

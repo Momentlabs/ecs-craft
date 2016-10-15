@@ -72,7 +72,6 @@ var (
   serverRestartCmd *kingpin.CmdClause
   serverTerminateCmd *kingpin.CmdClause
   serverListCmd *kingpin.CmdClause
-  serverDescribeAllCmd *kingpin.CmdClause
   serverDescribeCmd *kingpin.CmdClause
   serverAttachCmd *kingpin.CmdClause
   serverProxyCmd *kingpin.CmdClause
@@ -214,15 +213,9 @@ func init() {
   serverListCmd = serverCmd.Command("list", "List the servers for a cluster.")
   serverListCmd.Arg("cluster", "ECS cluster to look for servers.").Action(setCurrent).StringVar(&clusterArg)
 
-  serverDescribeAllCmd = serverCmd.Command("describe-all", "Show details for all servers in cluster.")
-  serverDescribeAllCmd.Arg("cluster", "The ECS cluster where the servers live.").Action(setCurrent).StringVar(&clusterArg)
   serverDescribeCmd = serverCmd.Command("describe", "Show some details for a users server.")
-  serverDescribeCmd.Arg("user", "The user that owns the server.").Required().StringVar(&userNameArg)
+  serverDescribeCmd.Arg("server", "The server to describe.").Required().StringVar(&serverNameArg)
   serverDescribeCmd.Arg("cluster", "The ECS cluster where the server lives.").Action(setCurrent).StringVar(&clusterArg)
-
-  // serverAttachCmd = serverCmd.Command("attach", "Attach a server to the network (creating DNS along the way.")
-  // serverAttachCmd.Arg("server-name", "The name of the server to attach to the network").Required().StringVar(&serverNameArg)
-  // serverAttachCmd.Arg("cluster", "The ECS cluster where the server lives.").Action(setCurrent).StringVar(&clusterArg)
 
   serverProxyCmd = serverCmd.Command("proxy", "This puts a server under a proxy. Making it avaible to proxy members, and using the proxy as a DNS proxy for the server.")
   serverProxyCmd.Arg("server", "Name of server to attach to proxy.").Required().StringVar(&serverNameArg)
@@ -290,8 +283,7 @@ func DoICommand(line string, sess *session.Session, ecsSvc *ecs.ECS, ec2Svc *ec2
       case serverRestartCmd.FullCommand(): err = doRestartServerCmd(sess)
       case serverTerminateCmd.FullCommand(): err = doTerminateServerCmd(sess)
       case serverListCmd.FullCommand(): err = doListServersCmd(sess)
-      case serverDescribeAllCmd.FullCommand(): err = doDescribeAllServersCmd(sess)
-      case serverDescribeCmd.FullCommand(): err = doDescribeServerCmd()
+      case serverDescribeCmd.FullCommand(): err = doDescribeServerCmd(serverNameArg, currentCluster, sess)
       case serverProxyCmd.FullCommand(): err = doServerProxyCmd(sess)
       case serverUnProxyCmd.FullCommand(): err = doServerUnProxyCmd(sess)
       case dnsCmd.FullCommand(): err = doListDNS(sess)
