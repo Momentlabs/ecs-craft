@@ -6,9 +6,12 @@ import(
   "time"
   "text/tabwriter"
   "github.com/aws/aws-sdk-go/aws/session"
+
   // "awslib"
   "github.com/jdrivas/awslib"
 )
+
+var cCache = make(awslib.ClusterCache, 0)
 
 func doListClusters(sess *session.Session) (error) {
   clusters, err := awslib.GetAllClusterDescriptions(sess)

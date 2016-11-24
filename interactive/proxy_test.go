@@ -9,7 +9,6 @@ import (
 )
 
 func TestProxyTaskDefSelect(t *testing.T) {
-
   testPositiveVals := [][]string {
     { defaultProxyTaskDef, mclib.BungeeProxyDefaultPortTaskDef,},
     { "defaultCraftPort", mclib.BungeeProxyDefaultPortTaskDef,},

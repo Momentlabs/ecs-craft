@@ -113,12 +113,13 @@ func doRestartServerCmd(sess *session.Session) (err error) {
   tdArn := serverTaskArg
   backup := snapshotNameArg
 
-  // Get set up ....
+  // Get set up .... find serer and proxies ....
   oServer, err  := mclib.GetServerFromName(serverName, cluster, sess)
   if err != nil { return fmt.Errorf("Failed to get current server, server not restarted: %s", err) }
 
   p, err := mclib.GetProxyFromName(proxyName, cluster, sess)
   if err != nil { return fmt.Errorf("Failed to get proxy. Server not restarted: %s", err) }
+
   // TODO: revist if we want to start a new server even if this is not proxied.
   proxyFound, err := p.IsServerProxied(oServer) 
   if !proxyFound || err != nil {
@@ -126,8 +127,10 @@ func doRestartServerCmd(sess *session.Session) (err error) {
     return fmt.Errorf("Failed to find proxy for server: %s", err)
   }
 
+  // .... Get latest backup if one hasn't been specified.
   if backup == "" {
-    bu, err  := oServer.GetLatestWorldSnapshot()
+    // bu, err  := oServer.GetLatestWorldSnapshot()
+    bu, err := oServer.LatestServerSnapshot()
     if err != nil { return fmt.Errorf("Failed to get snapshot to start the server. Server not restarted: %s", err) }
     backup = bu.URI()
   }
@@ -166,6 +169,7 @@ func doRestartServerCmd(sess *session.Session) (err error) {
     errorMessages = append(errorMessages, em)
   }
 
+  // ... switch proxy access to server to new server.
   rerr := p.UpdateServerAccess(nServer)
   if rerr == nil {
     successMessages = append(successMessages,"Server access update to new server.")
@@ -174,6 +178,7 @@ func doRestartServerCmd(sess *session.Session) (err error) {
     errorMessages = append(errorMessages, em)
   }
 
+  // ... figure out where we are based on last two commaands ..
   if serr != nil || rerr != nil {
     var successMessage string
     if len(successMessages) == 1 {
@@ -196,6 +201,7 @@ func doRestartServerCmd(sess *session.Session) (err error) {
     fmt.Printf("%sSwitched old server to new server on Proxy.%s\n", successColor, resetColor)
   }
 
+  // ... all 'good', now update DNS to reference the new server through the proxy ....
   sFQDN, ci, err := p.AttachToProxyNetwork(nServer)
   if err != nil {
     err = fmt.Errorf("Failed to update New Server DNS to proxy: %s. However, Server access added to proxy and proxy will forward.", err)
@@ -204,6 +210,7 @@ func doRestartServerCmd(sess *session.Session) (err error) {
   fmt.Printf("%sNew Server has DNS to proxy: %s%s\n", successColor, sFQDN, resetColor)
   setAlertOnDnsChangeSync(ci, sess)
 
+  // ... set forced host so that the proxy serer actually forwards requests to the new server ....
   err = p.StartProxyForServer(nServer) 
   if err != nil {
     return fmt.Errorf("Failed to make proxy forward for server (forcedHost): %s", err)
@@ -211,13 +218,15 @@ func doRestartServerCmd(sess *session.Session) (err error) {
   fmt.Printf("%sProxy will now forward connections for server.%s\n", successColor, resetColor )
 
 
-  // Kill old server task.
+  // ... Kill old server task .....
   _, err = awslib.StopTask(cluster, *oServer.TaskArn, sess)
   if err != nil {
     err = fmt.Errorf("Failed to stop original server task. Everything else seemed to work: %s", err)
   }
   fmt.Printf("%sOld server sucesfullly terminated.%s\n", successColor, resetColor)
 
+
+  // ... and report success.
   fmt.Printf("%sServer Restarted.%s\n", successColor, resetColor)
   serverEnv, ok  := s.ServerEnvironment()
   if !ok { fmt.Printf("Failed to get the server Environment.") }
@@ -233,7 +242,6 @@ func doRestartServerCmd(sess *session.Session) (err error) {
 
   return err
 }
-
 
 
 // Set up the environment to start the server from a snapshot.
@@ -257,8 +265,22 @@ func launchServer(ss mclib.ServerSpec, sess *session.Session) (s *mclib.Server, 
 
   startTime := time.Now()
   s, err = ss.LaunchServer()
-  if err != nil { 
-    fmt.Printf("%sFail in launch server. %#v%s", failColor, err, resetColor)
+  if err != nil {
+    switch err := err.(type) {
+    case mclib.TaskError:
+      fmt.Printf("%sFailure in launch server (Task Error).%s\n", failColor, resetColor)
+      if len(err.Failures) > 0 {
+        fmt.Printf("%s(%d) failures reported.%s\n", titleColor, len(err.Failures), resetColor)
+        w := tabwriter.NewWriter(os.Stdout, 4, 8, 8, ' ', 0)
+        fmt.Fprintf(w, "%sFailure\tResource\tReason%s\n", titleColor, resetColor)
+        for i, f := range err.Failures {
+          fmt.Fprintf(w, "%s%d\t%s\t%s%s\n", nullColor, i+1, *f.Arn, *f.Reason, resetColor)
+        }
+        w.Flush()
+      }
+    default:
+      fmt.Printf("%sFailure in launch server. %#v%s\n", failColor, err, resetColor)
+    }
     return s, err 
   }
 
@@ -268,8 +290,8 @@ func launchServer(ss mclib.ServerSpec, sess *session.Session) (s *mclib.Server, 
         // go get the most recent data.
         ns, err  := mclib.GetServer(s.ClusterName, *s.TaskArn, sess)
         if err == nil {
-          fmt.Printf("\n%s%s for %s %s:%d is now running (%s) on cluster: %s. %s\n",
-           successColor, ns.Name, ns.User, ns.PublicServerIp, ns.ServerPort, time.Since(startTime), ns.ClusterName, resetColor)
+          fmt.Printf("\n%s%s for %s %s is now running (%s) on cluster: %s. %s\n",
+           successColor, ns.Name, ns.User, ns.ServerAddress(), time.Since(startTime), ns.ClusterName, resetColor)
         } else {
           fmt.Printf("\n%sServer is now running for user %s on %s. (%s).%s\n",
            successColor, s.Name, s.ClusterName, time.Since(startTime), resetColor)
@@ -287,13 +309,20 @@ func launchServer(ss mclib.ServerSpec, sess *session.Session) (s *mclib.Server, 
 // TODO: This should get moved to mclib.
 func doTerminateServerCmd(sess *session.Session) (error) {
 
-  _, err := awslib.StopTask(currentCluster, serverTaskArnArg, sess)
+  serverName := serverNameArg
+  cluster := currentCluster
+
+  s, err := mclib.GetServerFromName(serverName, cluster, sess)
+  if err != nil { return fmt.Errorf("Teriminate server failed: %s", err)}
+
+  // _, err := awslib.StopTask(currentCluster, taskArn, sess)
+  taskArn, err := s.Terminate()
   if err != nil { return fmt.Errorf("terminate server failed: %s", err) }
 
-  fmt.Printf("Server Task stopping: %s.\n", awslib.ShortArnString(&serverTaskArnArg))
-  awslib.OnTaskStopped(currentCluster, serverTaskArnArg,  sess, func(stoppedTaskOutput *ecs.DescribeTasksOutput, err error) {
+  fmt.Printf("Server Task stopping: %s.\n", awslib.ShortArnString(&taskArn))
+  awslib.OnTaskStopped(currentCluster, taskArn,  sess, func(stoppedTaskOutput *ecs.DescribeTasksOutput, err error) {
     if stoppedTaskOutput == nil {
-      fmt.Printf("Task %s stopped.\nMissing Task Object.\n", serverTaskArnArg)
+      fmt.Printf("Task %s stopped.\nMissing Task Object.\n", taskArn)
       return
     }
     tasks := stoppedTaskOutput.Tasks
@@ -341,15 +370,15 @@ func doListServersCmd(sess *session.Session) (err error) {
   fmt.Printf("%s%s servers on %s%s\n", titleColor, 
     time.Now().Local().Format(time.RFC1123), currentCluster, resetColor)
   w := tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
-  fmt.Fprintf(w, "%sUser\tServer\tType\tAddress\tRcon\tServer\tControl\tUptime\tTTS%s\n", titleColor, resetColor)
+  fmt.Fprintf(w, "%sUser\tServer\tType\tPublic\tPrivate\tS Port\tR Port\tServer\tControl\tUptime\tTTS%s\n", titleColor, resetColor)
   if len(servers) == 0 {
     fmt.Fprintf(w,"%s\tNO SERVERS FOUND ON THIS CLUSTER%s\n", titleColor, resetColor)
     w.Flush()
     return nil
   } else {
     for _, s := range servers {
-      fmt.Fprintf(w, "%s%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n", nullColor,
-        s.User, s.Name, s.CraftType(), s.PublicServerAddress(), s.RconAddress(), s.ServerContainerStatus(), 
+      fmt.Fprintf(w, "%s%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n", nullColor,
+        s.User, s.Name, s.CraftType(), s.PublicServerIp, s.PrivateServerIp, s.ServerPort, s.RconPort, s.ServerContainerStatus(), 
         s.ControllerContainerStatus(), s.UptimeString(), s.DeepTask.TimeToStartString(), 
         resetColor)
     }
@@ -404,7 +433,7 @@ func doDescribeServerCmd(serverName, clusterName string, sess *session.Session) 
   // Task details
   fmt.Printf("\n%sTask%s\n", titleColor, resetColor)
   w = tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
-  fmt.Fprintf(w, "%sTaskDefinintion\tARN\tInstnanceID\tTaskRole\tublicIP\tPrivateIP\tNetwork Mode\tStatus%s\n", titleColor, resetColor) 
+  fmt.Fprintf(w, "%sTaskDefinintion\tARN\tInstnanceID\tTaskRole\tPublicIP\tPrivateIP\tNetwork Mode\tStatus%s\n", titleColor, resetColor) 
   roleArn := "<none>"
   if dt.TaskDefinition.TaskRoleArn != nil { roleArn = *dt.TaskDefinition.TaskRoleArn }
   fmt.Fprintf(w,"%s%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n", nullColor,
@@ -453,7 +482,7 @@ func doDescribeServerCmd(serverName, clusterName string, sess *session.Session) 
   }
   w.Flush()
 
-  // Configuration for running.
+  // Image
   w = tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
   fmt.Fprintf(w, "\n%sName\tImage\tEntpryPoint\tCommand%s\n", titleColor, resetColor)
   for _, c := range dt.Task.Containers {
@@ -463,7 +492,7 @@ func doDescribeServerCmd(serverName, clusterName string, sess *session.Session) 
   }
   w.Flush()
 
-
+  // User/WorkingDir/Log
   w = tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
   fmt.Fprintf(w, "\n%sName\tUser\tWorkingDir\tLog\tLog Options%s\n", titleColor, resetColor)
   for _, c := range dt.Task.Containers {
@@ -552,6 +581,22 @@ func doDescribeServerCmd(serverName, clusterName string, sess *session.Session) 
   }
   w.Flush()
 
+  // Logs
+  fmt.Printf("\n%sLog Configuration:%s\n", titleColor, resetColor)
+  w = tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
+  fmt.Fprintf(w, "%sContainer\tLog Driver\tOptions%s\n", titleColor, 
+    resetColor)
+  td := dt.TaskDefinition
+  for _, c := range td.ContainerDefinitions {
+    lc := c.LogConfiguration
+    fmt.Fprintf(w, "%s%s\t%s", nullColor, *c.Name, *lc.LogDriver)
+    for _, k := range sortedKeys(lc.Options) {
+      v, _ := lc.Options[k]
+      fmt.Fprintf(w, "\t%s=%s", k, *v)
+    }
+    fmt.Fprintf(w, "%s\n", resetColor)
+  }
+  w.Flush()
 
   // Environments
   tel := mergeEnvs(envs)
@@ -567,6 +612,17 @@ func doDescribeServerCmd(serverName, clusterName string, sess *session.Session) 
   // Per instance metrics
   return err
 }
+
+// TODO: Guessing this belongs in a library somewhere.
+func sortedKeys(m map[string]*string) (s []string) {
+  s = make([]string, 0)
+  for k := range m {
+    s = append(s, k)
+  }
+  sort.Strings(s)
+  return s
+}
+
 
 type taskEnvEntry struct {
   Container string

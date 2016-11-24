@@ -39,6 +39,7 @@ var (
 
   // General State
   currentCluster = defaultCluster
+  currentSession  *session.Session
   log = sl.New()
 
   // UI State
@@ -208,7 +209,8 @@ func init() {
   serverRestartCmd.Arg("ecs-task", "ECS Task that represents a running minecraft server.").Default(defaultServerTaskDef).StringVar(&serverTaskArg)
 
   serverTerminateCmd = serverCmd.Command("terminate", "Stop this server")
-  serverTerminateCmd.Arg("ecs-task-arn", "ECS Task ARN for this server.").Required().StringVar(&serverTaskArnArg)
+  serverTerminateCmd.Arg("server-name", "ECS Task ARN for this server.").Required().StringVar(&serverNameArg)
+  serverTerminateCmd.Arg("cluster", "ECS cluster to look for server.").Action(setCurrent).StringVar(&clusterArg)
 
   serverListCmd = serverCmd.Command("list", "List the servers for a cluster.")
   serverListCmd.Arg("cluster", "ECS cluster to look for servers.").Action(setCurrent).StringVar(&clusterArg)
@@ -313,7 +315,17 @@ func setCurrent(pc *kingpin.ParseContext) (error) {
     case *kingpin.ArgClause : 
       fc := c.(*kingpin.ArgClause)
       if fc.Model().Name == "cluster" {
-        currentCluster = *pe.Value
+        nc := *pe.Value
+        there, err := cCache.Contains(nc, currentSession)
+        if there {
+          currentCluster = nc
+        } else {
+          if err != nil {
+            fmt.Printf("Failed to find cluster: %s\n", err)
+          } else {
+            fmt.Printf("Failed to find cluster \"%s\".\n", nc)
+          }
+        }
       }
     }
   }
@@ -409,15 +421,15 @@ func promptLoop(process func(string) (error)) (err error) {
 func DoInteractive(config *aws.Config) {
 
   // Set up AWS
-  session := session.New(config)
+  currentSession = session.New(config)
 
   // Print out some account specifics.
   // fmt.Printf("%s\n", awslib.AccountDetailsString(config))
 
-  ecsSvc := ecs.New(session)
-  ec2Svc := ec2.New(session)
-  s3Svc := s3.New(session)
-  xICommand := func(line string) (err error) {return DoICommand(line, session, ecsSvc, ec2Svc, s3Svc)}
+  ecsSvc := ecs.New(currentSession)
+  ec2Svc := ec2.New(currentSession)
+  s3Svc := s3.New(currentSession)
+  xICommand := func(line string) (err error) {return DoICommand(line, currentSession, ecsSvc, ec2Svc, s3Svc)}
   err := promptLoop(xICommand)
   if err != nil {fmt.Printf("Error - %s.\n", err)}
 }
