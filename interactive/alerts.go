@@ -60,6 +60,8 @@ func setUpProxyWaitAlerts(clusterName, waitTask string, sess *session.Session) {
         } else {
           fmt.Printf("%sAlerted that a new proxy task is running, but there was an error getting details: %s%s\n",
             warnColor, err, resetColor)
+          fmt.Printf("%sNot attaching proxy to network! Check to see if task created.\n%s", failColor, resetColor)
+          return
         }
 
         fmt.Printf("%sAttaching to network ....%s", warnColor, resetColor)
