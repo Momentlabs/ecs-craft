@@ -58,28 +58,21 @@ func doAttachProxy(sess *session.Session) (error) {
   return err
 }
 
-// func doProxyRemoveServer(sess *session.Session) (error) {
-//   p, err := mclib.GetProxyFromName(proxyNameArg, sess)
-//   if err != nil { return err }
-
-//   p.RemoveServer()
-//   return err
-// }
 
 // TODO: Much of this needs to move to mclib.
-func doLaunchProxy(sess *session.Session) (error) {
+func doLaunchProxy(proxyName, clusterName, proxyTD string, sess *session.Session) (error) {
 
   // Get these from the UI for now.
   // TODO: want to do some form of config for this,
   // though this may stand so it can be overridden by the UI ......
   // TODO: Also move to the patttern we've got for servers of ServerSpec to
   // launch from the taskdefinition.
-  proxyName := proxyNameArg
+  // proxyName := proxyNameArg
   bucketName := DefaultArchiveBucket
-  proxyTaskDef := getProxyTaskDef()
-  clusterName := currentCluster
+  proxyTaskDef := getProxyTaskDef(proxyTD)
+  // clusterName := currentCluster
 
-  env := getProxyTaskEnvironment(proxyName,DefaultArchiveRegion,bucketName)
+  env := getProxyTaskEnvironment(proxyName,DefaultArchiveRegion,bucketName, clusterName)
   start := time.Now()
   resp, err := awslib.RunTaskWithEnv(clusterName, proxyTaskDef, env, sess)
   if err != nil { return err }
@@ -113,9 +106,9 @@ func doLaunchProxy(sess *session.Session) (error) {
 
 // This implements logic to support using a default taskdef with either Random or 
 // the DefaultPort configuration. Or any task-definition at all.
-func getProxyTaskDef() (td string) {
-  td = proxyTaskDefArg
-  switch proxyTaskDefArg {
+func getProxyTaskDef(tdArg string) (td string) {
+  td = tdArg
+  switch tdArg {
   case "defaultCraftPort":
     td = mclib.BungeeProxyDefaultPortTaskDef
   case "defaultRandomPort":
@@ -136,12 +129,13 @@ func getProxyTaskDef() (td string) {
 // the separate proxy and barse verions.
 // DRY
 // TODO: Move this to mclib.
-func getProxyTaskEnvironment(proxyName, region, bucketName string) awslib.ContainerEnvironmentMap {
+func getProxyTaskEnvironment(proxyName, region, bucketName, clusterName string) awslib.ContainerEnvironmentMap {
 
   serverName := fmt.Sprintf("%s-hub-server", proxyName)
 
   cenv := make(awslib.ContainerEnvironmentMap)
   cenv[mclib.BungeeProxyServerContainerName] = map[string]string {
+    mclib.ClusterNameKey: clusterName,
     mclib.RoleKey: mclib.CraftProxyRole,
     mclib.ServerNameKey: proxyName,
     mclib.RconPasswordKey: mclib.ProxyRconPasswordDefault,
@@ -149,6 +143,7 @@ func getProxyTaskEnvironment(proxyName, region, bucketName string) awslib.Contai
   }
 
   cenv[mclib.BungeeProxyHubServerContainerName] = map[string]string {
+    mclib.ClusterNameKey: clusterName,
     mclib.RoleKey: mclib.CraftHubServerRole,
     mclib.ServerUserKey: proxyName,
     mclib.ServerNameKey: serverName,
@@ -177,6 +172,7 @@ func getProxyTaskEnvironment(proxyName, region, bucketName string) awslib.Contai
   }
 
   cenv[mclib.BungeeProxyHubControllerContainerName] = map[string]string {
+    mclib.ClusterNameKey: clusterName,
     mclib.RoleKey: mclib.CraftControllerRole,
     mclib.ServerNameKey: serverName,
     mclib.ArchiveRegionKey: region,
