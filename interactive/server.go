@@ -363,23 +363,52 @@ func doTerminateServerCmd(sess *session.Session) (error) {
   return nil
 }
 
-func doListServersCmd(sess *session.Session) (err error) { 
-  servers, err := mclib.GetServers(currentCluster, sess)
+func doListServersCmd(clusterName string, sess *session.Session) (err error) { 
+  servers, err := mclib.GetServers(clusterName, sess)
   if err != nil {return err}
 
   fmt.Printf("%s%s servers on %s%s\n", titleColor, 
     time.Now().Local().Format(time.RFC1123), currentCluster, resetColor)
   w := tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
-  fmt.Fprintf(w, "%sUser\tServer\tType\tPublic\tPrivate\tS Port\tR Port\tServer\tControl\tUptime\tTTS%s\n", titleColor, resetColor)
+  fmt.Fprintf(w, "%sUser\tServer\tTask Definition\tType\tPublic\tPrivate\tS Port\tR Port\tArn%s\n", titleColor, resetColor)
   if len(servers) == 0 {
     fmt.Fprintf(w,"%s\tNO SERVERS FOUND ON THIS CLUSTER%s\n", titleColor, resetColor)
     w.Flush()
     return nil
   } else {
+    sort.Sort(mclib.ByStartAt(servers))
     for _, s := range servers {
-      fmt.Fprintf(w, "%s%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n", nullColor,
-        s.User, s.Name, s.CraftType(), s.PublicServerIp, s.PrivateServerIp, s.ServerPort, s.RconPort, s.ServerContainerStatus(), 
-        s.ControllerContainerStatus(), s.UptimeString(), s.DeepTask.TimeToStartString(), 
+      fmt.Fprintf(w, "%s%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n", nullColor,
+        s.User, s.Name,  awslib.ShortArnString(s.DeepTask.TaskDefinition.TaskDefinitionArn), s.CraftType(), 
+        s.PublicServerIp, s.PrivateServerIp, s.ServerPort, s.RconPort, awslib.ShortArnString(s.TaskArn),
+        resetColor)
+    }
+  }
+  w.Flush()
+
+  return err
+}
+
+func doStatusServersCmd(clusterName string, sess *session.Session) (err error) {
+
+  servers, err := mclib.GetServers(clusterName, sess)
+  if err != nil {return err}
+
+  fmt.Printf("%s%s servers on %s%s\n", titleColor, 
+    time.Now().Local().Format(time.RFC1123), currentCluster, resetColor)
+  w := tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
+  fmt.Fprintf(w, "%sUser\tServer\tTask Definition\tType\tServer\tControl\tLaunch\tUptime\tTTS%s\n", titleColor, resetColor)
+  if len(servers) == 0 {
+    fmt.Fprintf(w,"%s\tNO SERVERS FOUND ON THIS CLUSTER%s\n", titleColor, resetColor)
+    w.Flush()
+    return nil
+  } else {
+    sort.Sort(mclib.ByStartAt(servers))
+    for _, s := range servers {
+      fmt.Fprintf(w, "%s%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n", nullColor,
+        s.User, s.Name,  awslib.ShortArnString(s.DeepTask.TaskDefinition.TaskDefinitionArn), s.CraftType(),
+        s.ServerContainerStatus(), s.ControllerContainerStatus(), s.StartedAtString(), s.UptimeString(), 
+        s.DeepTask.TimeToStartString(), 
         resetColor)
     }
   }
@@ -424,10 +453,10 @@ func doDescribeServerCmd(serverName, clusterName string, sess *session.Session) 
   // Overview stats on server.
   fmt.Printf("%s%s: %s on %s%s\n", titleColor, time.Now().Local().Format(time.RFC1123), s.Name, currentCluster, resetColor)
   w := tabwriter.NewWriter(os.Stdout, 4, 8, 3, ' ', 0)
-  fmt.Fprintf(w, "%sUser\tServer\tType\tDNS\tIP\tServer\tControl\tUptime\tTTS%s\n", titleColor, resetColor)
-  fmt.Fprintf(w, "%s%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n", nullColor, 
+  fmt.Fprintf(w, "%sUser\tServer\tType\tDNS\tIP\tServer\tControl\tLaunch\tUptime\tTTS%s\n", titleColor, resetColor)
+  fmt.Fprintf(w, "%s%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n", nullColor, 
     s.User, s.Name, s.CraftType(), fqdn, ipAddress, s.ServerContainerStatus(), s.ControllerContainerStatus(), 
-    s.UptimeString(), dt.TimeToStartString(), resetColor)
+    dt.StartedAtString(), s.UptimeString(), dt.TimeToStartString(), resetColor)
   w.Flush()
 
   // Task details
