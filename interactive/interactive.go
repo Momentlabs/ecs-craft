@@ -1,7 +1,6 @@
 package interactive 
 
 import (
-  "github.com/bobappleyard/readline"
   "strings"
   "fmt"
   "io"
@@ -10,9 +9,10 @@ import (
   "github.com/aws/aws-sdk-go/service/ecs"
   "github.com/aws/aws-sdk-go/service/ec2"
   "github.com/aws/aws-sdk-go/service/s3"
+  "github.com/chzyer/readline"
+
   "github.com/jdrivas/sl"
   "github.com/mgutz/ansi"
-  // "github.com/op/go-logging"
   // "gopkg.in/alecthomas/kingpin.v2"
   "github.com/alecthomas/kingpin"
   "github.com/Sirupsen/logrus"
@@ -401,21 +401,20 @@ func doQuit(sess *session.Session) (error) {
 func doTerminate(i int) {}
 
 func promptLoop(process func(string) (error)) (err error) {
-  errStr := "Error: %s\n"
   for moreCommands := true; moreCommands; {
     prompt := fmt.Sprintf("%scraft [%s%s%s]:%s ", titleEmph, infoColor, currentCluster, titleEmph, resetColor)
-    line, err := readline.String(prompt)
+    line, err := readline.Line(prompt)
     if err == io.EOF {
       moreCommands = false
     } else if err != nil {
-      fmt.Printf(errStr, err)
+      fmt.Printf("Readline Error: %s%s\n", failColor, err, resetColor)
     } else {
       readline.AddHistory(line)
       err = process(line)
       if err == io.EOF {
         moreCommands = false
       } else if err != nil {
-        fmt.Printf(errStr, err)
+        fmt.Printf("%sError: %s%s\n", failColor, err, resetColor)
       }
     }
   }
@@ -427,16 +426,14 @@ func DoInteractive(config *aws.Config) {
 
   // Set up AWS
   currentSession = session.New(config)
-
-  // Print out some account specifics.
-  // fmt.Printf("%s\n", awslib.AccountDetailsString(config))
-
   ecsSvc := ecs.New(currentSession)
   ec2Svc := ec2.New(currentSession)
   s3Svc := s3.New(currentSession)
+
+  readline.SetHistoryPath("./.ecs-craft_history")
   xICommand := func(line string) (err error) {return DoICommand(line, currentSession, ecsSvc, ec2Svc, s3Svc)}
   err := promptLoop(xICommand)
-  if err != nil {fmt.Printf("Error - %s.\n", err)}
+  if err != nil { fmt.Printf("%sError exiting prompter: %s%s\n", failColor, err, resetColor) }
 }
 
 
